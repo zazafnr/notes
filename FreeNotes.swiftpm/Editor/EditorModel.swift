@@ -26,6 +26,7 @@ final class EditorModel: ObservableObject {
     private var pending: (page: UUID, drawing: PKDrawing)?
     private var saveTask: Task<Void, Never>?
     private var toolBeforeEraser: PKTool?
+    private var isClosed = false
 
     init(notebookID: UUID, store: LibraryStore) {
         self.notebookID = notebookID
@@ -64,6 +65,8 @@ final class EditorModel: ObservableObject {
     }
 
     func close() {
+        guard !isClosed else { return }
+        isClosed = true
         flush()
         store.updateNotebook(notebookID) { $0.lastPage = pageIndex }
         updateThumbnail()
