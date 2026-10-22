@@ -1,0 +1,49 @@
+name: iPad-Build
+
+# Kompiliert die Swift-Playgrounds-App auf einem Mac in der Cloud,
+# damit Fehler auffallen, bevor die App aufs iPad kommt.
+on:
+  push:
+    paths:
+      - "FreeNotes.swiftpm/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode 16 wählen (wie Swift Playgrounds)
+        run: |
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: Schemes anzeigen
+        working-directory: FreeNotes.swiftpm
+        run: xcodebuild -list
+
+      - name: Für iPad-Simulator kompilieren
+        working-directory: FreeNotes.swiftpm
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -scheme FreeNotes \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Fehler-Zusammenfassung
+        if: failure()
+        working-directory: FreeNotes.swiftpm
+        run: grep -E "error:" build.log | sort -u | head -80 || true
