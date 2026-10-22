@@ -209,6 +209,11 @@ struct BookPanel: View {
                 ToolbarIcon(symbol: isAssigned ? "pin.circle.fill" : "ellipsis.circle")
             }
 
+            Button { model.toggleBookFullScreen() } label: {
+                ToolbarIcon(symbol: model.bookFullScreen ? "rectangle.split.2x1" : "arrow.up.left.and.arrow.down.right")
+            }
+            .help(model.bookFullScreen ? "Buch und Heft nebeneinander" : "Buch im Vollbild")
+
             Button { model.toggleBook() } label: { ToolbarIcon(symbol: "xmark") }
         }
         .buttonStyle(PressableStyle())

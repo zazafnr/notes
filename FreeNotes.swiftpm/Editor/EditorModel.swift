@@ -23,6 +23,8 @@ final class EditorModel: ObservableObject {
     @Published var rulerActive = false
     @Published var wholePage = false
     @Published var showBook = false
+    /// Buch über den ganzen Bildschirm (Heft bleibt im Hintergrund offen).
+    @Published var bookFullScreen = false
     @Published var snapshot: LassoSnapshot?
 
     weak var host: PageCanvasHost?
@@ -309,7 +311,15 @@ final class EditorModel: ObservableObject {
     // MARK: Buch daneben
 
     func toggleBook() {
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) { showBook.toggle() }
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+            showBook.toggle()
+            if !showBook { bookFullScreen = false }
+        }
+        Haptics.tap()
+    }
+
+    func toggleBookFullScreen() {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) { bookFullScreen.toggle() }
         Haptics.tap()
     }
 

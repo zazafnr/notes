@@ -80,14 +80,16 @@ struct NotebookEditorView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.aiMode)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.imageEditMode)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.geometryTool)
-        .padding(.leading, model.showBook ? bookWidth : 0)
+        .padding(.leading, model.showBook && !model.bookFullScreen ? bookWidth : 0)
         .overlay(alignment: .leading) {
             if model.showBook {
                 HStack(spacing: 0) {
                     BookPanel(model: model)
-                    Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1)
+                    if !model.bookFullScreen {
+                        Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1)
+                    }
                 }
-                .frame(width: bookWidth)
+                .frame(width: model.bookFullScreen ? totalWidth : bookWidth)
                 .transition(.move(edge: .leading))
             }
         }
