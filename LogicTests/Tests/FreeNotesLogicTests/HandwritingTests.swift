@@ -209,3 +209,16 @@ final class PageRotationTests: XCTestCase {
         XCTAssertEqual(back.items[0].angle, 0, accuracy: 0.0001)
     }
 }
+
+final class WorksheetPromptTests: XCTestCase {
+    func testTaskAreaLimitsFields() {
+        let ocr = [HandwritingPrompts.OCRLine(text: "Nr. 3", rect: CGRect(x: 10, y: 20, width: 40, height: 12))]
+        let text = HandwritingPrompts.worksheetUser(imageSize: CGSize(width: 1100, height: 1555), ocr: ocr,
+                                                    solutions: "a) 12", taskRect: CGRect(x: 100, y: 200, width: 300, height: 150))
+        XCTAssertTrue(text.contains("[100, 200, 300, 150]"))
+        XCTAssertTrue(text.contains("NUR diese"))
+        XCTAssertTrue(text.contains("[10, 20, 40, 12] Nr. 3"))
+        let plain = HandwritingPrompts.worksheetUser(imageSize: CGSize(width: 1100, height: 1555), ocr: [], solutions: nil)
+        XCTAssertFalse(plain.contains("eingekreist"))
+    }
+}

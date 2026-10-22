@@ -9,6 +9,8 @@ struct WorksheetFillSheet: View {
     var solutions: String?
     /// Die Seite ist eine gerade eingefügte Buchseite.
     var fromBook = false
+    /// Wo die eingekreiste Aufgabe liegt (Anteile 0…1): Nur dort wird eingetragen.
+    var taskArea: CGRect? = nil
     /// Keine passenden Stellen gefunden: Lösung stattdessen als Heft-Eintrag schreiben.
     var onFallback: ((String) -> Void)? = nil
     @EnvironmentObject private var settings: AISettings
@@ -91,6 +93,13 @@ struct WorksheetFillSheet: View {
                     .overlay {
                         GeometryReader { geo in
                             let s = geo.size.width / CGFloat(page.width)
+                            if let area = taskArea {
+                                // Eingekreiste Aufgabe
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Theme.aiColors[1], style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                                    .frame(width: area.width * geo.size.width, height: area.height * geo.size.height)
+                                    .offset(x: area.minX * geo.size.width, y: area.minY * geo.size.height)
+                            }
                             ForEach(Array(fields.enumerated()), id: \.element.id) { index, field in
                                 let r = field.rect
                                 ZStack(alignment: .topLeading) {
@@ -169,11 +178,15 @@ struct WorksheetFillSheet: View {
         let pixelSize = CGSize(width: CGFloat(page.width) * scale, height: CGFloat(page.height) * scale)
         let solutions = solutions
         let pageSize = page.size
+        let taskRect = taskArea.map {
+            CGRect(x: $0.minX * pixelSize.width, y: $0.minY * pixelSize.height,
+                   width: $0.width * pixelSize.width, height: $0.height * pixelSize.height)
+        }
         task = Task {
             let ocr = await Task.detached(priority: .userInitiated) { WorksheetOCR.lines(in: cg, size: pixelSize) }.value
             guard !Task.isCancelled else { return }
             do {
-                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: ocr, solutions: solutions)
+                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: ocr, solutions: solutions, taskRect: taskRect)
                 guard let base64 = image.jpegBase64(maxSide: 1600) else { throw AIError.empty }
                 let raw = try await AIRequest.text(system: HandwritingPrompts.worksheetSystem, user: user,
                                                    images: [base64], settings: settings, effort: "medium")

@@ -30,18 +30,26 @@ enum PageCropper {
 
     /// Die Buchseite, auf der ein eingekreister Bereich liegt (bei Doppelseiten die passende Hälfte).
     /// `rect` und `viewSize` in Punkten des Buch-Fensters.
-    static func page(containing rect: CGRect, viewSize: CGSize, in image: UIImage) -> UIImage {
-        guard let cg = image.cgImage, viewSize.width > 0 else { return image }
+    /// Zusätzlich: wo der eingekreiste Bereich auf dieser Seite liegt (Anteile 0…1).
+    static func page(containing rect: CGRect, viewSize: CGSize, in image: UIImage) -> (image: UIImage, area: CGRect?) {
+        guard let cg = image.cgImage, viewSize.width > 0, viewSize.height > 0 else { return (image, nil) }
         var bounds = pageBounds(in: image)
+        let sx = CGFloat(cg.width) / viewSize.width, sy = CGFloat(cg.height) / viewSize.height
+        let lasso = CGRect(x: rect.minX * sx, y: rect.minY * sy, width: rect.width * sx, height: rect.height * sy)
         if PageDetection.isSpread(width: bounds.width, height: bounds.height) {
-            let midX = rect.midX * CGFloat(cg.width) / viewSize.width
+            let midX = lasso.midX
             let half = bounds.width / 2
             bounds = midX < bounds.minX + half
                 ? CGRect(x: bounds.minX, y: bounds.minY, width: half, height: bounds.height)
                 : CGRect(x: bounds.minX + half, y: bounds.minY, width: half, height: bounds.height)
         }
-        guard let cropped = cg.cropping(to: bounds.integral) else { return image }
-        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+        guard let cropped = cg.cropping(to: bounds.integral), bounds.width > 0, bounds.height > 0 else { return (image, nil) }
+        let page = UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+        let inside = lasso.intersection(bounds)
+        guard !inside.isNull else { return (page, nil) }
+        let area = CGRect(x: (inside.minX - bounds.minX) / bounds.width, y: (inside.minY - bounds.minY) / bounds.height,
+                          width: inside.width / bounds.width, height: inside.height / bounds.height)
+        return (page, area)
     }
 
     /// Linke, rechte Seite oder die ganze Doppelseite.
