@@ -166,3 +166,43 @@ final class ImageItemTests: XCTestCase {
         XCTAssertEqual(PageMetrics.centimeters(CGFloat(Page.defaultWidth)), 21, accuracy: 0.0001)
     }
 }
+
+final class PageDetectionTests: XCTestCase {
+    /// Dunkler Hintergrund, helle Kopfleiste über die ganze Breite, darunter eine helle Seite.
+    private func screenshot(width: Int, height: Int, page: (x: Range<Int>, y: Range<Int>), header: Range<Int>) -> [Double] {
+        var lum = [Double](repeating: 0.25, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                if header.contains(y) || (page.x.contains(x) && page.y.contains(y)) {
+                    lum[y * width + x] = 0.97
+                }
+            }
+        }
+        // ein paar dunkle »Textzeilen« auf der Seite
+        for y in stride(from: page.y.lowerBound + 5, to: page.y.upperBound - 3, by: 9) {
+            for x in page.x.dropFirst(5).dropLast(5) { lum[y * width + x] = 0.1 }
+        }
+        return lum
+    }
+
+    func testFindsSinglePageBelowHeader() throws {
+        let lum = screenshot(width: 100, height: 140, page: (10..<90, 25..<130), header: 0..<20)
+        let found = try XCTUnwrap(PageDetection.pageRect(luminance: lum, width: 100, height: 140))
+        XCTAssertEqual(found.x, 10..<90)
+        XCTAssertEqual(found.y, 25..<130)
+        XCTAssertFalse(PageDetection.isSpread(width: Double(found.x.count), height: Double(found.y.count)))
+    }
+
+    func testBridgesGutterOfDoubleSpread() throws {
+        var lum = screenshot(width: 200, height: 120, page: (10..<190, 20..<110), header: 0..<12)
+        for y in 20..<110 { lum[y * 200 + 100] = 0.3 }   // Schatten in der Buchmitte
+        let found = try XCTUnwrap(PageDetection.pageRect(luminance: lum, width: 200, height: 120))
+        XCTAssertEqual(found.x, 10..<190)
+        XCTAssertTrue(PageDetection.isSpread(width: Double(found.x.count), height: Double(found.y.count)))
+    }
+
+    func testRunHelper() {
+        XCTAssertEqual(PageDetection.run(in: [0, 1, 1, 0, 1, 1, 0, 0, 0, 1], threshold: 0.5, center: 2, maxGap: 1), 1..<6)
+        XCTAssertNil(PageDetection.run(in: [], threshold: 0.5, center: 0, maxGap: 1))
+    }
+}

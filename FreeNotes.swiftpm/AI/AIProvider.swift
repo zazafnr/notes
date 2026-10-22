@@ -43,7 +43,7 @@ enum AIProviderKind: String, CaseIterable, Identifiable, Codable, Sendable {
     var limitHint: String {
         switch self {
         case .claude:
-            return "Kostenpflichtig, mit Guthaben von console.anthropic.com. Die App verteilt dein Monatsbudget auf die Tage und wechselt danach automatisch zu OpenRouter."
+            return "Kostenpflichtig, mit Guthaben von console.anthropic.com (Sonnet 5.5: ca. 1–2 Cent pro Anfrage). Deinen Verbrauch siehst du in der Console."
         case .gemini:
             return "Kostenloser Key von Google AI Studio. Sehr gut bei Mathe und beim Lesen von Bildern. Es gibt Limits pro Minute und pro Tag."
         case .openrouter:

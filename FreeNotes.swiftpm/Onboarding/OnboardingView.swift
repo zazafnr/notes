@@ -104,7 +104,7 @@ struct OnboardingView: View {
                     .symbolEffect(.bounce, value: step)
                 Text("KI einrichten")
                     .font(.largeTitle.weight(.bold))
-                Text("Claude antwortet, solange dein Tagesbudget reicht. Danach übernimmt OpenRouter kostenlos.")
+                Text("Trag Claude und/oder OpenRouter ein. Welchen Anbieter die App nutzt, stellst du später in den Einstellungen oder direkt im KI-Fenster um.")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

@@ -329,6 +329,11 @@ final class EditorModel: ObservableObject {
         Haptics.success()
     }
 
+    /// Merkt sich still die zuletzt gelesene Stelle im zugeordneten Buch.
+    func rememberBookPosition(_ stored: String) {
+        store.updateNotebook(notebookID) { $0.bookURL = stored }
+    }
+
     /// Ausschnitt aus dem Buch an die KI (öffnet das Frage-Fenster).
     func ask(about image: UIImage) {
         lastLassoRect = nil

@@ -80,69 +80,12 @@ final class ClaudeStreamTests: XCTestCase {
     }
 }
 
-final class ClaudeBudgetTests: XCTestCase {
-    private var calendar: Calendar = {
-        var c = Calendar(identifier: .gregorian)
-        c.timeZone = TimeZone(identifier: "Europe/Berlin")!
-        return c
-    }()
-
-    private func date(_ day: Int, month: Int = 10) -> Date {
-        calendar.date(from: DateComponents(year: 2026, month: month, day: day, hour: 12))!
-    }
-
+final class ClaudePricingTests: XCTestCase {
     func testPricing() {
         XCTAssertEqual(ClaudePricing.cost(model: "claude-sonnet-5-5", inputTokens: 1_000_000, outputTokens: 0), 2, accuracy: 0.0001)
         XCTAssertEqual(ClaudePricing.cost(model: "claude-sonnet-5-5", inputTokens: 1500, outputTokens: 1500), 0.018, accuracy: 0.0001)
         XCTAssertEqual(ClaudePricing.cost(model: "claude-haiku-5-5", inputTokens: 1500, outputTokens: 1500), 0.0009, accuracy: 0.00001)
         // Unbekannt = teuerster Preis
         XCTAssertEqual(ClaudePricing.cost(model: "claude-neu", inputTokens: 0, outputTokens: 1_000_000), 20, accuracy: 0.0001)
-    }
-
-    func testRequestsPerDay() {
-        XCTAssertEqual(ClaudeBudget.requestsPerDay(monthlyBudget: 5, model: "claude-sonnet-5-5"), 9)
-        XCTAssertEqual(ClaudeBudget.requestsPerDay(monthlyBudget: 5, model: "claude-haiku-5-5"), 185)
-    }
-
-    func testDailyAllowanceSpreadsBudget() {
-        let budget = ClaudeBudget(monthlyBudget: 5, ledger: ClaudeUsageLedger(), calendar: calendar)
-        // Oktober hat 31 Tage: am 1. → 5 $ / 31
-        XCTAssertEqual(budget.dailyAllowance(at: date(1)), 5.0 / 31, accuracy: 0.0001)
-        // Am 22. noch 10 Tage übrig
-        XCTAssertEqual(budget.dailyAllowance(at: date(22)), 0.5, accuracy: 0.0001)
-    }
-
-    func testTodayIsCappedAndSwitchesOff() {
-        var budget = ClaudeBudget(monthlyBudget: 5, ledger: ClaudeUsageLedger(), calendar: calendar)
-        let day = date(1)
-        XCTAssertTrue(budget.canUseClaude(at: day, model: "claude-sonnet-5-5"))
-        for _ in 0..<9 { budget.record(cost: 0.018, at: day) }
-        XCTAssertFalse(budget.canUseClaude(at: day, model: "claude-sonnet-5-5"), "nach ~9 Anfragen ist der Tag voll")
-        // Nächster Tag: wieder frei
-        XCTAssertTrue(budget.canUseClaude(at: date(2), model: "claude-sonnet-5-5"))
-    }
-
-    func testUnusedBudgetCarriesOverAndMonthResets() {
-        var budget = ClaudeBudget(monthlyBudget: 5, ledger: ClaudeUsageLedger(), calendar: calendar)
-        budget.record(cost: 0.10, at: date(1))
-        budget.roll(to: date(2))
-        XCTAssertEqual(budget.ledger.spentBeforeToday, 0.10, accuracy: 0.0001)
-        XCTAssertEqual(budget.dailyAllowance(at: date(2)), 4.9 / 30, accuracy: 0.0001)
-        budget.roll(to: date(1, month: 11))
-        XCTAssertEqual(budget.ledger.spentThisMonth, 0)
-        XCTAssertEqual(budget.ledger.month, "2026-11")
-    }
-
-    func testNeverMoreThanMonthlyBudget() {
-        var budget = ClaudeBudget(monthlyBudget: 5, ledger: ClaudeUsageLedger(), calendar: calendar)
-        var spent = 0.0
-        for day in 1...31 {
-            while budget.canUseClaude(at: date(day), model: "claude-sonnet-5-5") {
-                budget.record(cost: 0.02, at: date(day))
-                spent += 0.02
-            }
-        }
-        XCTAssertLessThanOrEqual(spent, 5.02)
-        XCTAssertGreaterThan(spent, 4.8, "das Budget soll auch ausgenutzt werden")
     }
 }

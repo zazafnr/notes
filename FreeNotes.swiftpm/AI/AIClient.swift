@@ -7,7 +7,7 @@ struct AIMessage: Sendable {
     var images: [String] = []
 }
 
-/// Ein Stück der Antwort: Text oder die verbrauchten Tokens (nur Claude, für das Budget).
+/// Ein Stück der Antwort: Text oder die verbrauchten Tokens (nur Claude).
 enum AIChunk: Sendable, Equatable {
     case text(String)
     case usage(input: Int, output: Int)
@@ -20,7 +20,6 @@ enum AIError: LocalizedError {
     case http(Int, String)
     case empty
     case refused
-    case budgetExhausted
 
     var isRateLimit: Bool {
         if case .rateLimited = self { return true }
@@ -41,8 +40,6 @@ enum AIError: LocalizedError {
             return "Die KI hat keine Antwort geschickt. Versuch es noch einmal oder wähle ein anderes Modell."
         case .refused:
             return "Claude hat diese Anfrage abgelehnt. Formuliere sie anders oder frag OpenRouter."
-        case .budgetExhausted:
-            return "Das Claude-Budget für heute ist aufgebraucht und es ist kein kostenloser Anbieter eingerichtet. Trag in den Einstellungen einen OpenRouter-Key ein, dann geht es automatisch dort weiter."
         }
     }
 }
@@ -91,7 +88,7 @@ enum AIClient {
             let task = Task {
                 var input = 0
                 var output = 0
-                // Verbrauchte Tokens immer melden, auch bei Abbruch, damit das Budget stimmt.
+                // Verbrauchte Tokens immer melden, auch bei Abbruch.
                 func reportUsage() {
                     if input > 0 || output > 0 { continuation.yield(.usage(input: input, output: output)) }
                     input = 0

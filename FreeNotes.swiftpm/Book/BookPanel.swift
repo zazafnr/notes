@@ -136,6 +136,8 @@ final class BookBrowser: NSObject, ObservableObject, WKUIDelegate, WKNavigationD
     func snapshot(of rect: CGRect? = nil) async -> UIImage? {
         let config = WKSnapshotConfiguration()
         if let rect { config.rect = rect }
+        // Doppelte Auflösung, damit Text auf der Heftseite scharf bleibt
+        config.snapshotWidth = NSNumber(value: Double((rect?.width ?? webView.bounds.width) * 2))
         return try? await webView.takeSnapshot(configuration: config)
     }
 }
@@ -175,6 +177,16 @@ enum BookFiles {
         return URL(string: stored)
     }
 
+    /// Erkennt das Buch unabhängig von der Seite: Host + die ersten zwei Pfadteile
+    /// (z. B. »a.digi4school.at/ebook/1234«) oder der Dateiname eines PDF-Buchs.
+    static func bookKey(_ stored: String?) -> String? {
+        guard let stored else { return nil }
+        if stored.hasPrefix("book-file:") { return stored }
+        guard let url = URL(string: stored), let host = url.host else { return stored }
+        let parts = url.pathComponents.filter { $0 != "/" }.prefix(2)
+        return ([host] + parts).joined(separator: "/")
+    }
+
     /// Umgekehrt: aus einer geöffneten URL die dauerhafte Adresse machen.
     static func storable(_ url: URL) -> String {
         if url.isFileURL, url.path.hasPrefix(folder.path) {
@@ -193,9 +205,19 @@ struct BookPanel: View {
 
     private var assigned: String? { model.notebook?.bookURL }
 
+    /// Ist das gerade offene Buch (egal welche Seite) diesem Heft zugeordnet?
     private var isAssigned: Bool {
         guard let assigned, let current = browser.currentURL else { return false }
-        return BookFiles.storable(current) == assigned
+        return BookFiles.bookKey(BookFiles.storable(current)) == BookFiles.bookKey(assigned)
+    }
+
+    /// Seite einfügen und das Heft zeigen.
+    private func addPage(_ part: PageCropper.Part) {
+        Task {
+            guard let shot = await browser.snapshot() else { return }
+            model.addBackgroundPages([PageCropper.crop(shot, part: part)])
+            if model.bookFullScreen { model.toggleBookFullScreen() }
+        }
     }
 
     var body: some View {
@@ -235,6 +257,12 @@ struct BookPanel: View {
         }
         .background(Color(uiColor: .systemBackground))
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: circling)
+        .onChange(of: browser.currentURL) { _, url in
+            // Im zugeordneten Buch die aktuelle Seite merken, damit es dort wieder aufgeht
+            guard let url, isAssigned else { return }
+            let stored = BookFiles.storable(url)
+            if stored != assigned { model.rememberBookPosition(stored) }
+        }
         .onAppear {
             guard !didLoad else { return }
             didLoad = true
@@ -280,7 +308,7 @@ struct BookPanel: View {
                 Button {
                     if let url = browser.currentURL { model.assignBook(BookFiles.storable(url)) }
                 } label: {
-                    Label(isAssigned ? "Ist diesem Heft zugeordnet" : "Diese Seite diesem Heft zuordnen",
+                    Label(isAssigned ? "Buch ist diesem Heft zugeordnet" : "Dieses Buch diesem Heft zuordnen",
                           systemImage: isAssigned ? "pin.fill" : "pin")
                 }
                 .disabled(browser.currentURL == nil)
@@ -295,12 +323,14 @@ struct BookPanel: View {
                     Label("PDF-Buch öffnen …", systemImage: "doc.richtext")
                 }
                 Divider()
+                Section("Als neue Heftseite zum Beschreiben") {
+                    Button { addPage(.left) } label: { Label("Linke Buchseite", systemImage: "rectangle.lefthalf.filled") }
+                    Button { addPage(.right) } label: { Label("Rechte Buchseite", systemImage: "rectangle.righthalf.filled") }
+                    Button { addPage(.spread) } label: { Label("Doppelseite (quer)", systemImage: "rectangle.split.2x1") }
+                }
                 Button {
                     Task { if let image = await browser.snapshot() { model.addImage(image) } }
-                } label: { Label("Sichtbare Buchseite ins Heft", systemImage: "square.and.arrow.down.on.square") }
-                Button {
-                    Task { if let image = await browser.snapshot() { model.addBackgroundPages([image]) } }
-                } label: { Label("Als neue Heftseite", systemImage: "doc.badge.plus") }
+                } label: { Label("Sichtbaren Ausschnitt als Bild einfügen", systemImage: "photo.badge.plus") }
                 if assigned != nil {
                     Divider()
                     Button(role: .destructive) { model.assignBook(nil) } label: {

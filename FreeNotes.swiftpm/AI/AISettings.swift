@@ -22,9 +22,6 @@ final class AISettings: ObservableObject {
     @Published var geminiModel: String { didSet { defaults.set(geminiModel, forKey: "ai.model.gemini") } }
     @Published var openRouterModel: String { didSet { defaults.set(openRouterModel, forKey: "ai.model.openrouter") } }
     @Published var claudeModel: String { didSet { defaults.set(claudeModel, forKey: "ai.model.claude") } }
-    /// Monatsbudget für Claude in US-Dollar (5 $ ≈ 5–6 € mit Mehrwertsteuer).
-    @Published var claudeMonthlyBudget: Double { didSet { defaults.set(claudeMonthlyBudget, forKey: "ai.claude.budget") } }
-    @Published private(set) var claudeLedger: ClaudeUsageLedger
     @Published var autoFallback: Bool { didSet { defaults.set(autoFallback, forKey: "ai.autoFallback") } }
     @Published var grade: String { didSet { defaults.set(grade, forKey: "ai.grade") } }
     @Published var fingerDrawing: Bool { didSet { defaults.set(fingerDrawing, forKey: "pen.finger") } }
@@ -41,9 +38,6 @@ final class AISettings: ObservableObject {
         geminiModel = defaults.string(forKey: "ai.model.gemini") ?? AIProviderKind.gemini.defaultModel
         openRouterModel = defaults.string(forKey: "ai.model.openrouter") ?? AIProviderKind.openrouter.defaultModel
         claudeModel = defaults.string(forKey: "ai.model.claude") ?? AIProviderKind.claude.defaultModel
-        claudeMonthlyBudget = defaults.object(forKey: "ai.claude.budget") as? Double ?? 5
-        claudeLedger = (defaults.data(forKey: "ai.claude.ledger"))
-            .flatMap { try? JSONDecoder().decode(ClaudeUsageLedger.self, from: $0) } ?? ClaudeUsageLedger()
         autoFallback = defaults.object(forKey: "ai.autoFallback") as? Bool ?? true
         grade = defaults.string(forKey: "ai.grade") ?? "Klasse 10"
         fingerDrawing = defaults.bool(forKey: "pen.finger")
@@ -79,29 +73,6 @@ final class AISettings: ObservableObject {
         }
     }
 
-    // MARK: Claude-Budget
-
-    var claudeBudget: ClaudeBudget {
-        ClaudeBudget(monthlyBudget: claudeMonthlyBudget, ledger: claudeLedger).rolled(to: Date())
-    }
-
-    /// Ist heute noch Claude-Budget übrig?
-    var claudeAvailableToday: Bool {
-        claudeBudget.canUseClaude(at: Date(), model: model(for: .claude))
-    }
-
-    func resetClaudeUsage() {
-        claudeLedger = ClaudeUsageLedger()
-        defaults.removeObject(forKey: "ai.claude.ledger")
-    }
-
-    func recordClaudeUsage(model: String, inputTokens: Int, outputTokens: Int) {
-        var budget = ClaudeBudget(monthlyBudget: claudeMonthlyBudget, ledger: claudeLedger)
-        budget.record(cost: ClaudePricing.cost(model: model, inputTokens: inputTokens, outputTokens: outputTokens), at: Date())
-        claudeLedger = budget.ledger
-        if let data = try? JSONEncoder().encode(claudeLedger) { defaults.set(data, forKey: "ai.claude.ledger") }
-    }
-
     var hasAnyKey: Bool {
         AIProviderKind.allCases.contains { !key(for: $0).isEmpty }
     }
@@ -112,20 +83,19 @@ final class AISettings: ObservableObject {
         return AIConfig(provider: p, model: model(for: p), key: k)
     }
 
-    /// Reihenfolge der Anbieter: gewählter zuerst, dann die anderen mit Key (Claude nur, solange Budget übrig ist).
+    /// Reihenfolge der Anbieter: gewählter zuerst, bei Fehlern (falls eingeschaltet) die anderen mit Key.
     var providerOrder: [AIProviderKind] {
         var list = [provider]
         if autoFallback {
             let others: [AIProviderKind] = [.claude, .openrouter, .gemini]
             list += others.filter { $0 != provider && !key(for: $0).isEmpty }
         }
-        if !claudeAvailableToday { list.removeAll { $0 == .claude } }
         return list
     }
 
-    /// Wird Claude gerade übersprungen, weil das Tagesbudget aufgebraucht ist?
-    var claudeSkippedForBudget: Bool {
-        provider == .claude && !key(for: .claude).isEmpty && !claudeAvailableToday
+    /// Anbieter, für die ein Key eingetragen ist (für die Schnellauswahl im KI-Fenster).
+    var configuredProviders: [AIProviderKind] {
+        AIProviderKind.allCases.filter { !key(for: $0).isEmpty }
     }
 }
 

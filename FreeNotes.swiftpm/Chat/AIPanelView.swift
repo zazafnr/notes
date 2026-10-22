@@ -5,6 +5,7 @@ import PhotosUI
 struct AIPanelView: View {
     @ObservedObject var chat: ChatController
     @EnvironmentObject private var store: LibraryStore
+    @EnvironmentObject private var settings: AISettings
     var title: String
     var onClose: (() -> Void)? = nil
     var onInsert: ((String) -> Void)? = nil
@@ -37,13 +38,28 @@ struct AIPanelView: View {
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.headline).lineLimit(1)
-                Text(chat.isStreaming ? "schreibt …" : "KI-Assistent")
+                Text(chat.isStreaming ? "schreibt …" : "KI-Assistent · \(settings.provider.title)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .contentTransition(.opacity)
             }
             Spacer()
             Menu {
+                Section("KI-Anbieter") {
+                    ForEach(AIProviderKind.allCases) { p in
+                        Button {
+                            settings.provider = p
+                            Haptics.tap()
+                        } label: {
+                            if settings.provider == p {
+                                Label(p.title, systemImage: "checkmark")
+                            } else {
+                                Text(p.title + (settings.key(for: p).isEmpty ? " (kein Key)" : ""))
+                            }
+                        }
+                        .disabled(settings.key(for: p).isEmpty)
+                    }
+                }
                 Button(role: .destructive) { chat.clear() } label: {
                     Label("Verlauf leeren", systemImage: "trash")
                 }
