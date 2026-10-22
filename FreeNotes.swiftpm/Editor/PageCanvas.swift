@@ -6,24 +6,24 @@ import PencilKit
 /// Papiermuster als gekachelte Ebene: Beim Hineinzoomen werden die Linien in höherer Auflösung neu gezeichnet.
 final class PaperPatternLayer: CATiledLayer {
     private let lock = NSLock()
-    private var style: PaperStyle = .blank
-    private var size: CGSize = .zero
+    private var paperStyle: PaperStyle = .blank
+    private var paperSize: CGSize = .zero
 
     override class func fadeDuration() -> CFTimeInterval { 0.05 }
 
     func update(style: PaperStyle, size: CGSize) {
         lock.lock()
-        let changed = style != self.style || size != self.size
-        self.style = style
-        self.size = size
+        let changed = style != paperStyle || size != paperSize
+        paperStyle = style
+        paperSize = size
         lock.unlock()
         if changed { setNeedsDisplay() }
     }
 
     override func draw(in ctx: CGContext) {
         lock.lock()
-        let style = self.style
-        let size = self.size
+        let style = paperStyle
+        let size = paperSize
         lock.unlock()
         PageRenderer.drawPaper(style, size: size, in: ctx)
     }
