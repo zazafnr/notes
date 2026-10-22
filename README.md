@@ -2,12 +2,16 @@
 
 Eine eigene GoodNotes-Alternative für die Schule:
 
-- ✍️ Mit dem **Apple Pencil** schreiben (PencilKit: Stifte, Marker, Radierer, Lineal, Lasso), zoomen, Doppeltippen/Drücken auf dem Pencil
+- ✍️ Mit dem **Apple Pencil** schreiben (PencilKit: Stifte, Marker, Radierer, Lineal, Lasso), zoomen, Doppeltippen/Drücken auf dem Pencil wechselt zum Radierer (Größe einstellbar)
 - 📚 **Fächer** mit Farbe und Symbol, Hefte mit Papier blanko, liniert, kariert oder gepunktet, sortieren und durchsuchen
 - 📷 Buchseiten und Arbeitsblätter **scannen**, **Fotos/Screenshots** und **PDFs** einfügen, per Drag & Drop
 - 🖼️ Bilder auf der Seite **verschieben, skalieren und löschen**
 - 📄 Seiten hinzufügen, duplizieren, umsortieren und löschen; **blättern** per Wischen (seitlich oder nach oben/unten)
 - ✨ **KI-Kreis**: Aufgabe einkreisen → »Lösen«, »Erklären«, »Schritt für Schritt«, »Nur Tipp« … → Antwort erscheint direkt neben der Seite und kann auf die Seite eingefügt werden
+- 🖋️ **In deiner Handschrift ins Heft**: KI-Antworten werden wie ein Heft-Eintrag formatiert (»S. 42 Nr. 3«, Ergebnis doppelt unterstrichen) und Strich für Strich wie mit dem Pencil auf die Linien geschrieben – als echte, radierbare Striche
+- 📝 **Zettel ausfüllen**: Die KI findet Lücken und Schreiblinien auf einem gescannten Arbeitsblatt und trägt die Antworten dort in deiner Schrift ein
+- 🔤 **Meine Handschrift** (Einstellungen): Größe, Ordentlichkeit, Tempo und einzelne Buchstaben selbst nachschreiben
+- 🔄 Seiten um 90° **drehen** (Tinte, Bilder und Scan drehen mit)
 - 🧮 Formeln in KI-Antworten werden schön gesetzt (KaTeX); ohne Internet als lesbarer Text
 - 💬 **KI-Chat** pro Heft und allgemein, mit Bild-Anhängen und der aktuellen Seite
 - 🔎 **Handschrift durchsuchbar**: Texterkennung beim Schließen eines Hefts
