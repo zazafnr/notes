@@ -363,7 +363,7 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
 
     private var pendingCurl: (view: UIView, forward: Bool)?
 
-    /// Die alte Seite liegt kurz obenauf und rollt sich dann weg (vorwärts) bzw. die neue rollt sich darüber (zurück).
+    /// Blättern wie in GoodNotes: Die alte Seite gleitet zur Seite hinaus, die neue schiebt sich hinterher.
     func playCurl(_ snapshot: UIView, forward: Bool) {
         pendingCurl = (snapshot, forward)
         setNeedsLayout()
@@ -376,12 +376,21 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         snap.frame = bounds
         snap.isUserInteractionEnabled = false
         addSubview(snap)
-        // Erst nach dem ersten Bild der neuen Seite starten, sonst blitzt sie kurz auf
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            UIView.transition(with: self, duration: 0.55,
-                              options: [curl.forward ? .transitionCurlUp : .transitionCurlDown, .allowUserInteraction],
-                              animations: { snap.removeFromSuperview() })
+        // Kleiner Abstand zwischen den Seiten, wie beim Durchblättern eines Hefts
+        let vertical = flipDirection == .vertical
+        let distance = (vertical ? bounds.height : bounds.width) + 24
+        let sign: CGFloat = curl.forward ? 1 : -1
+        func shift(_ amount: CGFloat) -> CGAffineTransform {
+            vertical ? CGAffineTransform(translationX: 0, y: amount) : CGAffineTransform(translationX: amount, y: 0)
+        }
+        canvas.transform = shift(sign * distance)
+        UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0.2,
+                       options: [.allowUserInteraction, .curveEaseOut]) {
+            snap.transform = shift(-sign * distance)
+            self.canvas.transform = .identity
+        } completion: { _ in
+            snap.removeFromSuperview()
+            self.canvas.transform = .identity
         }
     }
 

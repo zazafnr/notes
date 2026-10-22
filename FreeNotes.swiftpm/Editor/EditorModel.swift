@@ -50,7 +50,7 @@ final class EditorModel: ObservableObject {
     var navigatingForWriting = false
 
     private var lastLassoRect: CGRect?
-    /// Bild der alten Seite, das sich beim Blättern wegrollt.
+    /// Bild der alten Seite, das beim Blättern zur Seite hinausgleitet.
     private var pendingCurl: (view: UIView, forward: Bool)?
     private var pending: (page: UUID, drawing: PKDrawing)?
     private var saveTask: Task<Void, Never>?
@@ -136,7 +136,7 @@ final class EditorModel: ObservableObject {
 
     // MARK: Seiten
 
-    /// Merkt sich ein Bild der aktuellen Seite; die neue Seite rollt es dann wie Papier weg.
+    /// Merkt sich ein Bild der aktuellen Seite; die neue Seite schiebt es beim Blättern zur Seite.
     private func prepareCurl(forward: Bool) {
         guard let host, host.bounds.width > 100, let snap = host.snapshotView(afterScreenUpdates: false) else {
             pendingCurl = nil
