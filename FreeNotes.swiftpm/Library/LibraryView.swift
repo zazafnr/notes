@@ -35,6 +35,7 @@ struct LibraryView: View {
         }
         .fullScreenCover(item: $openNotebook) { item in
             NotebookEditorView(notebookID: item.id, store: store, settings: settings)
+                .costToast()
                 .environmentObject(store)
                 .environmentObject(settings)
                 // Kein Zoom-Übergang: dessen Wisch-Geste hat das Heft beim Schreiben versehentlich geschlossen.
@@ -66,6 +67,7 @@ struct LibraryView: View {
         .onAppear {
             if !settings.hasOnboarded { showOnboarding = true }
         }
+        .costToast()
     }
 
     private var currentSubjectID: UUID? {

@@ -85,8 +85,8 @@ final class ChatController: ObservableObject {
                     case .text(let piece):
                         text += piece
                         update(replyID) { $0.text = text; $0.meta = meta }
-                    case .usage:
-                        break
+                    case .usage(let input, let output):
+                        settings.recordClaudeUsage(model: config.model, inputTokens: input, outputTokens: output)
                     }
                 }
                 if Task.isCancelled { return }

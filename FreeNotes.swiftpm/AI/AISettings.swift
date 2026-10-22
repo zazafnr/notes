@@ -29,6 +29,13 @@ final class AISettings: ObservableObject {
     @Published var flipDirection: FlipDirection { didSet { defaults.set(flipDirection.rawValue, forKey: "pages.flip") } }
     @Published var pencilAction: PencilAction { didSet { defaults.set(pencilAction.rawValue, forKey: "pen.action") } }
     @Published private(set) var keyVersion = 0
+    /// Geschätzte Claude-Kosten in diesem Monat (US-Dollar, aus den gemeldeten Tokens).
+    @Published private(set) var claudeSpent: Double
+    /// Kurzer Hinweis, wenn wieder 0,50 $ zusammengekommen sind.
+    @Published var costNotice: String?
+    private var claudeMonth: String
+    private var claudeNotifiedSteps: Int
+    static let noticeStep = 0.5
 
     static let grades = ["Klasse 5", "Klasse 6", "Klasse 7", "Klasse 8", "Klasse 9", "Klasse 10",
                          "Klasse 11", "Klasse 12", "Klasse 13", "Ausbildung", "Studium"]
@@ -38,6 +45,9 @@ final class AISettings: ObservableObject {
         geminiModel = defaults.string(forKey: "ai.model.gemini") ?? AIProviderKind.gemini.defaultModel
         openRouterModel = defaults.string(forKey: "ai.model.openrouter") ?? AIProviderKind.openrouter.defaultModel
         claudeModel = defaults.string(forKey: "ai.model.claude") ?? AIProviderKind.claude.defaultModel
+        claudeSpent = defaults.double(forKey: "ai.claude.spent")
+        claudeMonth = defaults.string(forKey: "ai.claude.month") ?? ""
+        claudeNotifiedSteps = defaults.integer(forKey: "ai.claude.notified")
         autoFallback = defaults.object(forKey: "ai.autoFallback") as? Bool ?? true
         grade = defaults.string(forKey: "ai.grade") ?? "Klasse 10"
         fingerDrawing = defaults.bool(forKey: "pen.finger")
@@ -71,6 +81,52 @@ final class AISettings: ObservableObject {
         case .gemini: geminiModel = model
         case .openrouter: openRouterModel = model
         }
+    }
+
+    // MARK: Claude-Verbrauch (nur Anzeige, kein Limit)
+
+    private static func monthKey(_ date: Date = Date()) -> String {
+        let c = Calendar.current.dateComponents([.year, .month], from: date)
+        return String(format: "%04d-%02d", c.year ?? 0, c.month ?? 0)
+    }
+
+    /// Zählt die Kosten einer Antwort und meldet sich bei jeweils 0,50 $.
+    func recordClaudeUsage(model: String, inputTokens: Int, outputTokens: Int) {
+        let month = Self.monthKey()
+        if month != claudeMonth {
+            claudeMonth = month
+            claudeSpent = 0
+            claudeNotifiedSteps = 0
+        }
+        claudeSpent += ClaudePricing.cost(model: model, inputTokens: inputTokens, outputTokens: outputTokens)
+        let steps = Int(claudeSpent / Self.noticeStep)
+        if steps > claudeNotifiedSteps {
+            claudeNotifiedSteps = steps
+            costNotice = "Claude diesen Monat: \(Self.dollar(Double(steps) * Self.noticeStep))"
+        }
+        saveClaudeUsage()
+    }
+
+    func resetClaudeUsage() {
+        claudeSpent = 0
+        claudeNotifiedSteps = 0
+        claudeMonth = Self.monthKey()
+        saveClaudeUsage()
+    }
+
+    private func saveClaudeUsage() {
+        defaults.set(claudeSpent, forKey: "ai.claude.spent")
+        defaults.set(claudeMonth, forKey: "ai.claude.month")
+        defaults.set(claudeNotifiedSteps, forKey: "ai.claude.notified")
+    }
+
+    /// Verbrauch dieses Monats (0, wenn ein neuer Monat begonnen hat).
+    var claudeSpentThisMonth: Double {
+        claudeMonth == Self.monthKey() ? claudeSpent : 0
+    }
+
+    static func dollar(_ value: Double) -> String {
+        value.formatted(.currency(code: "USD").locale(Locale(identifier: "de_DE")))
     }
 
     var hasAnyKey: Bool {

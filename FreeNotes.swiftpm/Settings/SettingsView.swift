@@ -30,6 +30,21 @@ struct SettingsView: View {
                     Text("Die App benutzt immer den hier gewählten Anbieter. Umschalten geht auch direkt im KI-Fenster (⋯). Ist »Bei Fehlern …« an und der Anbieter antwortet nicht (Limit, kein Netz), springt ein anderer mit Key ein.")
                 }
 
+                Section {
+                    HStack {
+                        Text("Claude diesen Monat")
+                        Spacer()
+                        Text(AISettings.dollar(settings.claudeSpentThisMonth))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("Zähler auf 0 setzen", role: .destructive) { settings.resetClaudeUsage() }
+                } header: {
+                    Text("Claude-Verbrauch")
+                } footer: {
+                    Text("Geschätzt aus den gemeldeten Tokens, ohne Limit. Alle 0,50 $ erscheint ein kurzer Hinweis. Den genauen Betrag zeigt console.anthropic.com (dort oft mit etwas Verzögerung).")
+                }
+
                 ForEach(AIProviderKind.allCases) { provider in
                     ProviderSection(provider: provider)
                 }
@@ -166,8 +181,8 @@ struct ProviderSection: View {
                                                    config: config, effort: "low") {
                 switch chunk {
                 case .text(let piece): text += piece
-                case .usage:
-                    break
+                case .usage(let input, let output):
+                    settings.recordClaudeUsage(model: config.model, inputTokens: input, outputTokens: output)
                 }
             }
             testOK = !text.trimmed.isEmpty
