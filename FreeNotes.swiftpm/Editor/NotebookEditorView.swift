@@ -13,6 +13,7 @@ struct NotebookEditorView: View {
 
     @State private var showPhotos = false
     @State private var photoItem: PhotosPickerItem?
+    @State private var photoAsPage = false
     @State private var showScanner = false
     @State private var showCamera = false
     @State private var showImporter = false
@@ -48,9 +49,17 @@ struct NotebookEditorView: View {
                 if model.imageEditMode {
                     imageHint.transition(.move(edge: .top).combined(with: .opacity))
                 }
+                if let tool = model.geometryTool {
+                    hint(tool.hint, symbol: tool.symbol) { model.toggleGeometry(tool) }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
             .padding(.horizontal, 14)
             .padding(.top, 6)
+        }
+        .overlay(alignment: .leading) {
+            sideTools
+                .padding(.leading, 12)
         }
         .overlay(alignment: .trailing) {
             if model.showPanel {
@@ -69,6 +78,7 @@ struct NotebookEditorView: View {
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: model.showPanel)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.aiMode)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.imageEditMode)
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.geometryTool)
         .onDrop(of: [.image], isTargeted: nil) { providers in
             let model = model
             var accepted = false
@@ -93,9 +103,10 @@ struct NotebookEditorView: View {
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
-                    model.addImage(img)
+                    if photoAsPage { model.addBackgroundPages([img]) } else { model.addImage(img) }
                 }
                 photoItem = nil
+                photoAsPage = false
             }
         }
         .fullScreenCover(isPresented: $showScanner) {
@@ -192,11 +203,6 @@ struct NotebookEditorView: View {
                         Label("Seite löschen", systemImage: "trash")
                     }
                     .disabled((model.notebook?.pages.count ?? 0) < 2)
-                    Button { model.toggleImageEditMode() } label: {
-                        Label(model.imageEditMode ? "Bilder fertig bearbeitet" : "Bilder verschieben & skalieren",
-                              systemImage: "arrow.up.and.down.and.arrow.left.and.right")
-                    }
-                    .disabled(model.currentPage?.items.isEmpty ?? true)
                 } label: { ToolbarIcon(symbol: "ellipsis.circle") }
             }
             .padding(4)
@@ -230,7 +236,8 @@ struct NotebookEditorView: View {
 
     private var insertMenu: some View {
         Menu {
-            Button { showPhotos = true } label: { Label("Foto oder Screenshot", systemImage: "photo.on.rectangle") }
+            Button { photoAsPage = false; showPhotos = true } label: { Label("Foto oder Screenshot einfügen", systemImage: "photo.on.rectangle") }
+            Button { photoAsPage = true; showPhotos = true } label: { Label("Foto als ganze Seite (z. B. Buchseite)", systemImage: "doc.richtext") }
             Button {
                 if let img = UIPasteboard.general.image { model.addImage(img) }
             } label: { Label("Bild aus Zwischenablage", systemImage: "doc.on.clipboard") }
@@ -243,10 +250,52 @@ struct NotebookEditorView: View {
         } label: { ToolbarIcon(symbol: "photo.badge.plus") }
     }
 
+    /// Senkrechte Leiste links: Lineal, Zirkel, Strecke, Bilder bearbeiten.
+    private var sideTools: some View {
+        VStack(spacing: 2) {
+            Button { model.toggleRuler() } label: {
+                ToolbarIcon(symbol: "ruler", active: model.rulerActive)
+            }
+            .help("Lineal")
+            ForEach(GeometryTool.allCases) { tool in
+                Button { model.toggleGeometry(tool) } label: {
+                    ToolbarIcon(symbol: tool.symbol, active: model.geometryTool == tool)
+                }
+                .help(tool.title)
+            }
+            Divider().frame(width: 28).padding(.vertical, 4)
+            Button { model.toggleImageEditMode() } label: {
+                ToolbarIcon(symbol: "photo.on.rectangle.angled", active: model.imageEditMode)
+            }
+            .disabled(model.currentPage?.items.isEmpty ?? true)
+            .help("Bilder verschieben, skalieren, drehen")
+        }
+        .padding(4)
+        .glass(cornerRadius: 24)
+        .buttonStyle(PressableStyle())
+    }
+
+    private func hint(_ text: String, symbol: String, done: @escaping () -> Void) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+            Text(text)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(2)
+            Button("Fertig", action: done)
+                .font(.subheadline.weight(.semibold))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Theme.accent, in: Capsule())
+        .shadow(color: Theme.accent.opacity(0.4), radius: 12, y: 4)
+    }
+
     private var imageHint: some View {
         HStack(spacing: 10) {
             Image(systemName: "hand.draw")
-            Text("Bilder ziehen, am Punkt unten rechts skalieren")
+            Text("Ziehen zum Verschieben, mit zwei Fingern zoomen/drehen, Punkte zum Skalieren/Drehen, lange drücken für mehr")
+                .lineLimit(2)
                 .font(.subheadline.weight(.medium))
             Button("Fertig") { model.toggleImageEditMode() }
                 .font(.subheadline.weight(.semibold))

@@ -19,6 +19,8 @@ final class EditorModel: ObservableObject {
     @Published var aiMode = false
     @Published var showPanel = false
     @Published var imageEditMode = false
+    @Published var geometryTool: GeometryTool?
+    @Published var rulerActive = false
     @Published var snapshot: LassoSnapshot?
 
     weak var host: PageCanvasHost?
@@ -112,6 +114,7 @@ final class EditorModel: ObservableObject {
         flush()
         aiMode = false
         imageEditMode = false
+        geometryTool = nil
         withAnimation(.easeInOut(duration: 0.25)) { pageIndex = index }
         Haptics.tap()
     }
@@ -238,6 +241,12 @@ final class EditorModel: ObservableObject {
             nb.pages[pageIndex].items.append(item)
         }
         Haptics.success()
+        // Gleich zum Zurechtrücken anbieten
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+            aiMode = false
+            geometryTool = nil
+            imageEditMode = true
+        }
     }
 
     func insertAnswer(_ text: String) {
@@ -258,8 +267,35 @@ final class EditorModel: ObservableObject {
     func toggleImageEditMode() {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
             imageEditMode.toggle()
-            if imageEditMode { aiMode = false }
+            if imageEditMode {
+                aiMode = false
+                geometryTool = nil
+            }
         }
+        Haptics.tap()
+    }
+
+    /// Bild angetippt: direkt in den Bearbeiten-Modus.
+    func startImageEditing() {
+        guard !imageEditMode else { return }
+        toggleImageEditMode()
+    }
+
+    // MARK: Lineal, Zirkel, Strecke
+
+    func toggleGeometry(_ tool: GeometryTool) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+            geometryTool = geometryTool == tool ? nil : tool
+            if geometryTool != nil {
+                aiMode = false
+                imageEditMode = false
+            }
+        }
+        Haptics.tap()
+    }
+
+    func toggleRuler() {
+        rulerActive.toggle()
         Haptics.tap()
     }
 
@@ -268,7 +304,10 @@ final class EditorModel: ObservableObject {
     func toggleAIMode() {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
             aiMode.toggle()
-            if aiMode { imageEditMode = false }
+            if aiMode {
+                imageEditMode = false
+                geometryTool = nil
+            }
         }
         Haptics.tap()
     }

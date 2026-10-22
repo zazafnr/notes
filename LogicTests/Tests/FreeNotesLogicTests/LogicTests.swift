@@ -141,3 +141,28 @@ final class PromptTests: XCTestCase {
         }
     }
 }
+
+final class ImageItemTests: XCTestCase {
+    func testOldItemsWithoutRotationLoad() throws {
+        let json = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","asset":"a.jpg","frame":[[10,20],[100,50]]}"#
+        let item = try JSONDecoder().decode(PageImageItem.self, from: Data(json.utf8))
+        XCTAssertNil(item.rotation)
+        XCTAssertEqual(item.angle, 0)
+    }
+
+    func testHitTestRespectsRotation() {
+        var item = PageImageItem(asset: "a.jpg", frame: CGRect(x: 0, y: 0, width: 200, height: 20))
+        XCTAssertTrue(item.contains(CGPoint(x: 190, y: 10)))
+        XCTAssertFalse(item.contains(CGPoint(x: 100, y: 90)))
+        item.rotation = Double.pi / 2
+        // Um 90° gedreht steht das Bild senkrecht um den Mittelpunkt (100, 10)
+        XCTAssertFalse(item.contains(CGPoint(x: 190, y: 10)))
+        XCTAssertTrue(item.contains(CGPoint(x: 100, y: 90)))
+        XCTAssertEqual(item.boundingBox.width, 20, accuracy: 0.001)
+        XCTAssertEqual(item.boundingBox.height, 200, accuracy: 0.001)
+    }
+
+    func testCentimeters() {
+        XCTAssertEqual(PageMetrics.centimeters(CGFloat(Page.defaultWidth)), 21, accuracy: 0.0001)
+    }
+}

@@ -4,11 +4,11 @@ import PencilKit
 /// Zeichnet Papier, Scans, Bilder und Tinte einer Seite (in Seitenkoordinaten).
 @MainActor
 enum PageRenderer {
-    static let lineColor = UIColor(red: 0.55, green: 0.70, blue: 0.90, alpha: 0.55)
-    static let gridColor = UIColor(white: 0.50, alpha: 0.25)
-    static let marginColor = UIColor(red: 0.93, green: 0.42, blue: 0.42, alpha: 0.45)
-
-    static func drawPaper(_ style: PaperStyle, size: CGSize, in ctx: CGContext) {
+    /// Reines Core Graphics, darf auch im Hintergrund laufen (gekachelte Ebenen beim Zoomen).
+    nonisolated static func drawPaper(_ style: PaperStyle, size: CGSize, in ctx: CGContext) {
+        let lineColor = UIColor(red: 0.55, green: 0.70, blue: 0.90, alpha: 0.55)
+        let gridColor = UIColor(white: 0.50, alpha: 0.25)
+        let marginColor = UIColor(red: 0.93, green: 0.42, blue: 0.42, alpha: 0.45)
         ctx.setFillColor(UIColor.white.cgColor)
         ctx.fill(CGRect(origin: .zero, size: size))
         switch style {
@@ -63,13 +63,24 @@ enum PageRenderer {
     static func drawBackground(page: Page, image: (String) -> UIImage?, in ctx: CGContext) {
         drawPaper(page.paper, size: page.size, in: ctx)
         UIGraphicsPushContext(ctx)
+        drawImages(page: page, image: image, in: ctx)
+        UIGraphicsPopContext()
+    }
+
+    /// Scan und eingefügte Bilder (mit Drehung). Erwartet einen aktiven UIGraphics-Kontext.
+    nonisolated static func drawImages(page: Page, image: (String) -> UIImage?, in ctx: CGContext) {
         if let bg = page.background, let img = image(bg) {
             img.draw(in: page.bounds)
         }
         for item in page.items {
-            image(item.asset)?.draw(in: item.frame)
+            guard let img = image(item.asset) else { continue }
+            ctx.saveGState()
+            ctx.translateBy(x: item.center.x, y: item.center.y)
+            ctx.rotate(by: item.angle)
+            img.draw(in: CGRect(x: -item.frame.width / 2, y: -item.frame.height / 2,
+                                width: item.frame.width, height: item.frame.height))
+            ctx.restoreGState()
         }
-        UIGraphicsPopContext()
     }
 
     /// Tinte immer im hellen Modus rendern, sonst wird schwarze Schrift im Dunkelmodus weiß.

@@ -46,6 +46,32 @@ struct PageImageItem: Codable, Identifiable, Equatable {
     var id = UUID()
     var asset: String
     var frame: CGRect
+    /// Drehung in Bogenmaß (fehlt in älteren Dateien).
+    var rotation: Double? = nil
+
+    var angle: CGFloat { CGFloat(rotation ?? 0) }
+    var center: CGPoint { CGPoint(x: frame.midX, y: frame.midY) }
+
+    /// Umschließendes Rechteck nach der Drehung (für Treffer-Tests).
+    var boundingBox: CGRect {
+        frame.applying(CGAffineTransform(translationX: -center.x, y: -center.y)
+            .concatenating(CGAffineTransform(rotationAngle: angle))
+            .concatenating(CGAffineTransform(translationX: center.x, y: center.y)))
+    }
+
+    /// Liegt der Punkt (Seitenkoordinaten) auf dem gedrehten Bild?
+    func contains(_ point: CGPoint) -> Bool {
+        let local = point.applying(CGAffineTransform(translationX: -center.x, y: -center.y)
+            .concatenating(CGAffineTransform(rotationAngle: -angle)))
+        return CGRect(x: -frame.width / 2, y: -frame.height / 2, width: frame.width, height: frame.height).contains(local)
+    }
+}
+
+/// Maße auf der Seite: Eine Seite ist 1000 Punkte breit, das entspricht A4 (21 cm).
+enum PageMetrics {
+    static let pointsPerCentimeter: CGFloat = CGFloat(Page.defaultWidth) / 21
+
+    static func centimeters(_ points: CGFloat) -> CGFloat { points / pointsPerCentimeter }
 }
 
 struct Page: Codable, Identifiable, Equatable {

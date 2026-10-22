@@ -1,10 +1,69 @@
 import SwiftUI
 import PencilKit
 
+// MARK: - Papier (gekachelt, bleibt bei jedem Zoom scharf)
+
+/// Papiermuster als gekachelte Ebene: Beim Hineinzoomen werden die Linien in höherer Auflösung neu gezeichnet.
+final class PaperPatternLayer: CATiledLayer {
+    private let lock = NSLock()
+    private var style: PaperStyle = .blank
+    private var size: CGSize = .zero
+
+    override class func fadeDuration() -> CFTimeInterval { 0.05 }
+
+    func update(style: PaperStyle, size: CGSize) {
+        lock.lock()
+        let changed = style != self.style || size != self.size
+        self.style = style
+        self.size = size
+        lock.unlock()
+        if changed { setNeedsDisplay() }
+    }
+
+    override func draw(in ctx: CGContext) {
+        lock.lock()
+        let style = self.style
+        let size = self.size
+        lock.unlock()
+        PageRenderer.drawPaper(style, size: size, in: ctx)
+    }
+}
+
+/// Scans und eingefügte Bilder, ebenfalls gekachelt.
+final class PageContentLayer: CATiledLayer {
+    private let lock = NSLock()
+    private var page: Page?
+    private var images: [String: UIImage] = [:]
+
+    override class func fadeDuration() -> CFTimeInterval { 0.05 }
+
+    func update(page: Page, images: [String: UIImage]) {
+        lock.lock()
+        self.page = page
+        self.images = images
+        lock.unlock()
+        setNeedsDisplay()
+    }
+
+    override func draw(in ctx: CGContext) {
+        lock.lock()
+        let page = self.page
+        let images = self.images
+        lock.unlock()
+        guard let page else { return }
+        UIGraphicsPushContext(ctx)
+        PageRenderer.drawImages(page: page, image: { images[$0] }, in: ctx)
+        UIGraphicsPopContext()
+    }
+}
+
 /// Papier, Scans und Bilder. Liegt hinter der Tinte und wird beim Zoomen mit skaliert.
 final class PaperBackgroundView: UIView {
-    var page: Page { didSet { if oldValue != page { setNeedsDisplay() } } }
+    private let patternLayer = PaperPatternLayer()
+    private let contentLayer = PageContentLayer()
     let imageProvider: (String) -> UIImage?
+
+    var page: Page { didSet { if oldValue != page { apply() } } }
 
     init(page: Page, imageProvider: @escaping (String) -> UIImage?) {
         self.page = page
@@ -12,26 +71,51 @@ final class PaperBackgroundView: UIView {
         super.init(frame: CGRect(origin: .zero, size: page.size))
         backgroundColor = .white
         isUserInteractionEnabled = false
-        contentMode = .redraw
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOpacity = 0.12
         layer.shadowRadius = 10
         layer.shadowOffset = CGSize(width: 0, height: 3)
+        for tiled in [patternLayer, contentLayer] as [CATiledLayer] {
+            tiled.contentsScale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
+            tiled.levelsOfDetail = 6
+            tiled.levelsOfDetailBias = 5
+            tiled.tileSize = CGSize(width: 512, height: 512)
+            layer.addSublayer(tiled)
+        }
+        contentLayer.isOpaque = false
+        apply()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func draw(_ rect: CGRect) {
-        guard let ctx = UIGraphicsGetCurrentContext() else { return }
-        PageRenderer.drawBackground(page: page, image: imageProvider, in: ctx)
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        patternLayer.frame = bounds
+        contentLayer.frame = bounds
+        CATransaction.commit()
+        layer.shadowPath = UIBezierPath(rect: bounds).cgPath
+    }
+
+    private func apply() {
+        patternLayer.update(style: page.paper, size: page.size)
+        var images: [String: UIImage] = [:]
+        for name in [page.background].compactMap({ $0 }) + page.items.map(\.asset) {
+            images[name] = imageProvider(name)
+        }
+        contentLayer.update(page: page, images: images)
     }
 }
 
-/// Enthält die PencilKit-Zeichenfläche, den Papierhintergrund, die Bild-Griffe und die KI-Schleife.
+// MARK: - Seite mit Zeichenfläche
+
+/// Enthält die PencilKit-Zeichenfläche, das Papier, die Bild-Griffe, Geometrie-Werkzeuge und die KI-Schleife.
 final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDelegate, UIGestureRecognizerDelegate {
     let canvas = PKCanvasView()
     let paper: PaperBackgroundView
     let imageOverlay = ImageEditOverlay()
+    let geometry = GeometryOverlayView()
     let lasso = LassoOverlayView()
     private(set) var page: Page
 
@@ -42,10 +126,12 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     var onPencilAction: (() -> Void)?
     var onItemsChange: (([PageImageItem]) -> Void)?
     var onFlip: ((Int) -> Void)?
+    var onImageTap: (() -> Void)?
 
     private var didInitialLayout = false
     private let insets = UIEdgeInsets(top: 84, left: 28, bottom: 140, right: 28)
     private var swipes: [UISwipeGestureRecognizer] = []
+    private var imageTap: UITapGestureRecognizer?
 
     var aiMode = false {
         didSet {
@@ -62,6 +148,16 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
             imageOverlay.isHidden = !imageEditMode
             imageOverlay.setItems(page.items)
             imageOverlay.layoutHandles()
+            updateInteraction()
+        }
+    }
+
+    var geometryTool: GeometryTool? {
+        didSet {
+            guard geometryTool != oldValue else { return }
+            geometry.tool = geometryTool ?? .compass
+            geometry.isHidden = geometryTool == nil
+            geometry.reset()
             updateInteraction()
         }
     }
@@ -97,6 +193,11 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         imageOverlay.onChange = { [weak self] items, final in self?.itemsChanged(items, final: final) }
         addSubview(imageOverlay)
 
+        geometry.paper = paper
+        geometry.isHidden = true
+        geometry.onComplete = { [weak self] tool, a, b in self?.addGeometry(tool, from: a, to: b) }
+        addSubview(geometry)
+
         lasso.isHidden = true
         lasso.onComplete = { [weak self] path in self?.handleLasso(path) }
         addSubview(lasso)
@@ -113,6 +214,14 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
             canvas.addGestureRecognizer(swipe)
             swipes.append(swipe)
         }
+
+        // Bild mit dem Finger antippen → Bearbeiten (verschieben, skalieren, drehen)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        canvas.addGestureRecognizer(tap)
+        imageTap = tap
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -133,21 +242,24 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     }
 
     private func updateInteraction() {
+        let overlayActive = imageEditMode || geometryTool != nil
         canvas.drawingGestureRecognizer.isEnabled = !imageEditMode
-        swipes.forEach { $0.isEnabled = !fingerDrawing && !aiMode && !imageEditMode }
+        swipes.forEach { $0.isEnabled = !fingerDrawing && !aiMode && !overlayActive }
+        imageTap?.isEnabled = !aiMode && !overlayActive
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         canvas.frame = bounds
         imageOverlay.frame = bounds
+        geometry.frame = bounds
         lasso.frame = bounds
         guard bounds.width > 100 else { return }
 
         let fit = (bounds.width - insets.left - insets.right) / CGFloat(page.width)
         let wasAtFit = abs(canvas.zoomScale - canvas.minimumZoomScale) < 0.001
         canvas.minimumZoomScale = fit
-        canvas.maximumZoomScale = fit * 5
+        canvas.maximumZoomScale = fit * 6
         if !didInitialLayout || wasAtFit {
             canvas.zoomScale = fit
         }
@@ -155,7 +267,6 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         if !didInitialLayout {
             canvas.contentOffset = CGPoint(x: -insets.left, y: -insets.top)
             didInitialLayout = true
-            refreshPaperResolution()
         }
         imageOverlay.layoutHandles()
     }
@@ -167,13 +278,6 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         paper.bounds = CGRect(origin: .zero, size: page.size)
         paper.transform = CGAffineTransform(scaleX: z, y: z)
         paper.center = CGPoint(x: size.width / 2, y: size.height / 2)
-    }
-
-    /// Papier nach dem Zoomen scharf neu zeichnen (begrenzt, um Speicher zu sparen).
-    private func refreshPaperResolution() {
-        let screenScale = window?.screen.scale ?? traitCollection.displayScale
-        paper.contentScaleFactor = min(max(screenScale * canvas.zoomScale, 1), 3)
-        paper.setNeedsDisplay()
     }
 
     override func didMoveToWindow() {
@@ -201,14 +305,10 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         imageOverlay.layoutHandles()
     }
 
-    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
-        refreshPaperResolution()
-    }
-
     /// Senkrechtes Blättern: über das Seitenende hinaus ziehen.
     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
                                    targetContentOffset: UnsafeMutablePointer<CGPoint>) {
-        guard flipDirection == .vertical, !aiMode, !imageEditMode else { return }
+        guard flipDirection == .vertical, !aiMode, !imageEditMode, geometryTool == nil else { return }
         let y = scrollView.contentOffset.y
         let maxY = scrollView.contentSize.height - scrollView.bounds.height + insets.bottom
         if y > maxY + 90 {
@@ -224,6 +324,13 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         onFlip?(swipe.direction == .left ? 1 : -1)
     }
 
+    @objc private func handleTap(_ tap: UITapGestureRecognizer) {
+        let point = tap.location(in: paper)
+        if page.items.contains(where: { $0.contains(point) }) {
+            onImageTap?()
+        }
+    }
+
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         true
@@ -231,6 +338,54 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
 
     func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
         onDrawingChange?(canvasView.drawing)
+    }
+
+    // MARK: Lineal
+
+    var rulerActive: Bool {
+        get { canvas.isRulerActive }
+        set { canvas.isRulerActive = newValue }
+    }
+
+    // MARK: Zirkel & Strecke
+
+    /// Fügt einen exakten Kreis oder eine gerade Strecke als echten Stift-Strich ein (rückgängig machbar).
+    private func addGeometry(_ tool: GeometryTool, from a: CGPoint, to b: CGPoint) {
+        let inking = (canvas.tool as? PKInkingTool) ?? PKInkingTool(.pen, color: .black, width: 3)
+        let ink = PKInk(inking.inkType, color: inking.color)
+        let width = max(inking.width, 1.5)
+        var points: [CGPoint] = []
+        switch tool {
+        case .compass:
+            let r = hypot(b.x - a.x, b.y - a.y)
+            let start = atan2(b.y - a.y, b.x - a.x)
+            let n = max(72, Int(r / 2))
+            points = (0...n).map { i in
+                let t = start + CGFloat(i) / CGFloat(n) * 2 * .pi
+                return CGPoint(x: a.x + r * cos(t), y: a.y + r * sin(t))
+            }
+        case .line:
+            let n = 24
+            points = (0...n).map { i in
+                let t = CGFloat(i) / CGFloat(n)
+                return CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+            }
+        }
+        let strokePoints = points.enumerated().map { index, p in
+            PKStrokePoint(location: p, timeOffset: TimeInterval(index) * 0.004,
+                          size: CGSize(width: width, height: width), opacity: 1, force: 1,
+                          azimuth: 0, altitude: .pi / 2)
+        }
+        let stroke = PKStroke(ink: ink, path: PKStrokePath(controlPoints: strokePoints, creationDate: Date()))
+        let before = canvas.drawing
+        var after = before
+        after.strokes.append(stroke)
+        canvas.undoManager?.registerUndo(withTarget: canvas) { canvas in
+            MainActor.assumeIsolated { canvas.drawing = before }
+        }
+        canvas.drawing = after
+        onDrawingChange?(after)
+        Haptics.success()
     }
 
     // MARK: Bilder bearbeiten
@@ -268,7 +423,173 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     }
 }
 
-// MARK: - Griffe zum Verschieben und Skalieren von Bildern
+// MARK: - Geometrie: Zirkel und Strecke
+
+enum GeometryTool: String, CaseIterable, Identifiable {
+    case compass, line
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .compass: return "Zirkel"
+        case .line: return "Strecke"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .compass: return "compass.drawing"
+        case .line: return "line.diagonal"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .compass: return "Zirkel: auf den Mittelpunkt setzen und den Radius aufziehen"
+        case .line: return "Strecke: Anfangspunkt setzen und ziehen (rastet bei 0°, 45°, 90° ein)"
+        }
+    }
+}
+
+/// Zeigt beim Ziehen eine Vorschau mit Maßen in cm und meldet am Ende Start und Ende in Seitenkoordinaten.
+final class GeometryOverlayView: UIView {
+    weak var paper: UIView?
+    var tool: GeometryTool = .compass
+    var onComplete: ((GeometryTool, CGPoint, CGPoint) -> Void)?
+
+    private let shape = CAShapeLayer()
+    private let guide = CAShapeLayer()
+    private let centerDot = CAShapeLayer()
+    private let label = PaddedLabel()
+    private var start: CGPoint?
+    private var end: CGPoint?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isMultipleTouchEnabled = false
+
+        shape.fillColor = nil
+        shape.strokeColor = UIColor.systemIndigo.cgColor
+        shape.lineWidth = 2.5
+        guide.fillColor = nil
+        guide.strokeColor = UIColor.systemIndigo.withAlphaComponent(0.6).cgColor
+        guide.lineWidth = 1.5
+        guide.lineDashPattern = [6, 5]
+        centerDot.fillColor = UIColor.systemIndigo.cgColor
+        [guide, shape, centerDot].forEach { layer.addSublayer($0) }
+
+        label.font = .monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
+        label.textColor = .white
+        label.backgroundColor = UIColor.systemIndigo
+        label.layer.cornerRadius = 12
+        label.layer.masksToBounds = true
+        label.isHidden = true
+        addSubview(label)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func reset() {
+        start = nil
+        end = nil
+        [shape, guide, centerDot].forEach { $0.path = nil }
+        label.isHidden = true
+    }
+
+    private var zoom: CGFloat { max(paper?.transform.a ?? 1, 0.01) }
+
+    /// Rastet Länge auf 1 mm und bei der Strecke den Winkel auf 0°/45°/90°… ein.
+    private func snapped(_ a: CGPoint, _ b: CGPoint) -> (end: CGPoint, lengthCM: CGFloat, degrees: CGFloat) {
+        var angle = atan2(b.y - a.y, b.x - a.x)
+        if tool == .line {
+            let step = CGFloat.pi / 4
+            let nearest = (angle / step).rounded() * step
+            if abs(angle - nearest) < 3 * .pi / 180 { angle = nearest }
+        }
+        let pagePoints = hypot(b.x - a.x, b.y - a.y) / zoom
+        let cm = (PageMetrics.centimeters(pagePoints) * 10).rounded() / 10
+        let length = cm * PageMetrics.pointsPerCentimeter * zoom
+        let snappedEnd = CGPoint(x: a.x + length * cos(angle), y: a.y + length * sin(angle))
+        var degrees = -angle * 180 / .pi
+        if degrees < 0 { degrees += 360 }
+        return (snappedEnd, cm, degrees)
+    }
+
+    private func redraw() {
+        guard let a = start else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        centerDot.path = UIBezierPath(ovalIn: CGRect(x: a.x - 4, y: a.y - 4, width: 8, height: 8)).cgPath
+        guard let b = end else {
+            CATransaction.commit()
+            return
+        }
+        let s = snapped(a, b)
+        let line = UIBezierPath()
+        line.move(to: a)
+        line.addLine(to: s.end)
+        switch tool {
+        case .compass:
+            let r = hypot(s.end.x - a.x, s.end.y - a.y)
+            shape.path = UIBezierPath(ovalIn: CGRect(x: a.x - r, y: a.y - r, width: 2 * r, height: 2 * r)).cgPath
+            guide.path = line.cgPath
+            label.text = "r = \(format(s.lengthCM)) cm"
+        case .line:
+            shape.path = line.cgPath
+            guide.path = nil
+            label.text = "\(format(s.lengthCM)) cm · \(Int(s.degrees.rounded()))°"
+        }
+        CATransaction.commit()
+        label.isHidden = false
+        label.sizeToFit()
+        label.center = CGPoint(x: (a.x + s.end.x) / 2, y: min(a.y, s.end.y) - 28)
+    }
+
+    private func format(_ value: CGFloat) -> String {
+        String(format: "%.1f", Double(value)).replacingOccurrences(of: ".", with: ",")
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let t = touches.first else { return }
+        start = t.location(in: self)
+        end = nil
+        redraw()
+        Haptics.soft()
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let t = touches.first else { return }
+        end = t.location(in: self)
+        redraw()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        defer { reset() }
+        guard let a = start, let b = end, let paper else { return }
+        let s = snapped(a, b)
+        guard s.lengthCM >= 0.2 else { return }
+        onComplete?(tool, convert(a, to: paper), convert(s.end, to: paper))
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        reset()
+    }
+}
+
+final class PaddedLabel: UILabel {
+    override func drawText(in rect: CGRect) {
+        super.drawText(in: rect.insetBy(dx: 10, dy: 4))
+    }
+
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        let s = super.sizeThatFits(size)
+        return CGSize(width: s.width + 20, height: s.height + 8)
+    }
+}
+
+// MARK: - Griffe zum Verschieben, Skalieren und Drehen von Bildern
 
 final class ImageEditOverlay: UIView {
     weak var paper: UIView?
@@ -277,7 +598,9 @@ final class ImageEditOverlay: UIView {
 
     private var items: [PageImageItem] = []
     private var handles: [UUID: ImageHandleView] = [:]
-    private var startFrame: CGRect = .zero
+    private var startItem: PageImageItem?
+    private var startDistance: CGFloat = 1
+    private var startAngle: CGFloat = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -302,28 +625,38 @@ final class ImageEditOverlay: UIView {
         for item in newItems where handles[item.id] == nil {
             let handle = ImageHandleView()
             let id = item.id
-            handle.onMove = { [weak self] t, state in self?.move(id, translation: t, state: state) }
-            handle.onResize = { [weak self] t, state in self?.resize(id, translation: t, state: state) }
-            handle.onDelete = { [weak self] in self?.delete(id) }
+            handle.onMove = { [weak self] d, state in self?.move(id, delta: d, state: state) }
+            handle.onPinch = { [weak self] factor, state in self?.pinch(id, factor: factor, state: state) }
+            handle.onRotate = { [weak self] radians, state in self?.rotate(id, by: radians, state: state) }
+            handle.onResizeKnob = { [weak self] location, state in self?.resizeKnob(id, location: location, state: state) }
+            handle.onRotateKnob = { [weak self] location, state in self?.rotateKnob(id, location: location, state: state) }
+            handle.onAction = { [weak self] action in self?.perform(action, on: id) }
             addSubview(handle)
             handles[id] = handle
         }
+        // Reihenfolge der Griffe wie die Bilder (oberstes Bild zuletzt)
+        for item in newItems { if let h = handles[item.id] { bringSubviewToFront(h) } }
     }
 
     func layoutHandles() {
         guard let paper, !isHidden else { return }
+        let z = max(paper.transform.a, 0.01)
         for item in items {
-            handles[item.id]?.frame = paper.convert(item.frame, to: self)
+            guard let h = handles[item.id] else { continue }
+            h.transform = .identity
+            h.bounds = CGRect(x: 0, y: 0, width: item.frame.width * z, height: item.frame.height * z)
+            h.center = paper.convert(item.center, to: self)
+            h.transform = CGAffineTransform(rotationAngle: item.angle)
         }
     }
 
-    private var scale: CGFloat { max(paper?.transform.a ?? 1, 0.01) }
+    private var zoom: CGFloat { max(paper?.transform.a ?? 1, 0.01) }
     private var pageBounds: CGRect { paper?.bounds ?? .zero }
 
-    private func begin(_ id: UUID, state: UIGestureRecognizer.State) -> Int? {
+    private func index(of id: UUID, state: UIGestureRecognizer.State) -> Int? {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return nil }
         if state == .began {
-            startFrame = items[i].frame
+            startItem = items[i]
             isDragging = true
             Haptics.tap()
         }
@@ -332,50 +665,120 @@ final class ImageEditOverlay: UIView {
 
     private func finish(_ state: UIGestureRecognizer.State) {
         layoutHandles()
-        let final = state == .ended || state == .cancelled
-        if final { isDragging = false }
+        let final = state == .ended || state == .cancelled || state == .failed
+        if final {
+            isDragging = false
+        }
         onChange?(items, final)
     }
 
-    private func move(_ id: UUID, translation: CGPoint, state: UIGestureRecognizer.State) {
-        guard let i = begin(id, state: state) else { return }
-        var f = startFrame
-        f.origin.x += translation.x / scale
-        f.origin.y += translation.y / scale
+    private func setSize(_ i: Int, width: CGFloat) {
+        let f = items[i].frame
+        guard f.width > 0 else { return }
+        let aspect = f.height / f.width
+        let w = min(max(width, 40), pageBounds.width * 1.5)
+        let c = items[i].center
+        items[i].frame = CGRect(x: c.x - w / 2, y: c.y - w * aspect / 2, width: w, height: w * aspect)
+    }
+
+    /// Rastet bei 0°, 90°, 180°, 270° ein.
+    private func snapAngle(_ angle: CGFloat) -> CGFloat {
+        let step = CGFloat.pi / 2
+        let nearest = (angle / step).rounded() * step
+        return abs(angle - nearest) < 4 * .pi / 180 ? nearest : angle
+    }
+
+    private func isFinal(_ state: UIGestureRecognizer.State) -> Bool {
+        state == .ended || state == .cancelled || state == .failed
+    }
+
+    // Verschieben, Zwei-Finger-Zoomen und -Drehen kommen gleichzeitig und als Schritte.
+    private func move(_ id: UUID, delta: CGPoint, state: UIGestureRecognizer.State) {
+        guard let i = index(of: id, state: state) else { return }
+        var f = items[i].frame
+        f.origin.x += delta.x / zoom
+        f.origin.y += delta.y / zoom
         f.origin.x = min(max(f.origin.x, -f.width * 0.5), pageBounds.width - f.width * 0.5)
         f.origin.y = min(max(f.origin.y, -f.height * 0.5), pageBounds.height - f.height * 0.5)
         items[i].frame = f
         finish(state)
     }
 
-    private func resize(_ id: UUID, translation: CGPoint, state: UIGestureRecognizer.State) {
-        guard let i = begin(id, state: state), startFrame.width > 0 else { return }
-        let aspect = startFrame.height / startFrame.width
-        let width = min(max(startFrame.width + translation.x / scale, 60), pageBounds.width * 1.2)
-        items[i].frame.size = CGSize(width: width, height: width * aspect)
+    private func pinch(_ id: UUID, factor: CGFloat, state: UIGestureRecognizer.State) {
+        guard let i = index(of: id, state: state) else { return }
+        setSize(i, width: items[i].frame.width * factor)
         finish(state)
     }
 
-    private func delete(_ id: UUID) {
-        items.removeAll { $0.id == id }
+    private func rotate(_ id: UUID, by delta: CGFloat, state: UIGestureRecognizer.State) {
+        guard let i = index(of: id, state: state) else { return }
+        var angle = items[i].angle + delta
+        if isFinal(state) { angle = snapAngle(angle) }
+        items[i].rotation = Double(angle)
+        finish(state)
+    }
+
+    private func resizeKnob(_ id: UUID, location: CGPoint, state: UIGestureRecognizer.State) {
+        guard let i = index(of: id, state: state), let start = startItem, let paper else { return }
+        let c = paper.convert(start.center, to: self)
+        let d = hypot(location.x - c.x, location.y - c.y)
+        if state == .began { startDistance = max(d, 1) }
+        setSize(i, width: start.frame.width * d / startDistance)
+        finish(state)
+    }
+
+    private func rotateKnob(_ id: UUID, location: CGPoint, state: UIGestureRecognizer.State) {
+        guard let i = index(of: id, state: state), let start = startItem, let paper else { return }
+        let c = paper.convert(start.center, to: self)
+        let a = atan2(location.y - c.y, location.x - c.x)
+        if state == .began { startAngle = a }
+        items[i].rotation = Double(snapAngle(start.angle + a - startAngle))
+        finish(state)
+    }
+
+    private func perform(_ action: ImageHandleView.Action, on id: UUID) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        switch action {
+        case .duplicate:
+            var copy = items[i]
+            copy.id = UUID()
+            copy.frame = copy.frame.offsetBy(dx: 30, dy: 30)
+            items.append(copy)
+        case .front:
+            items.append(items.remove(at: i))
+        case .back:
+            items.insert(items.remove(at: i), at: 0)
+        case .resetRotation:
+            items[i].rotation = nil
+        case .delete:
+            items.remove(at: i)
+        }
         setItems(items)
+        layoutHandles()
         Haptics.success()
         onChange?(items, true)
     }
 }
 
-final class ImageHandleView: UIView {
+final class ImageHandleView: UIView, UIGestureRecognizerDelegate, UIContextMenuInteractionDelegate {
+    enum Action { case duplicate, front, back, resetRotation, delete }
+
     var onMove: ((CGPoint, UIGestureRecognizer.State) -> Void)?
-    var onResize: ((CGPoint, UIGestureRecognizer.State) -> Void)?
-    var onDelete: (() -> Void)?
+    var onPinch: ((CGFloat, UIGestureRecognizer.State) -> Void)?
+    var onRotate: ((CGFloat, UIGestureRecognizer.State) -> Void)?
+    var onResizeKnob: ((CGPoint, UIGestureRecognizer.State) -> Void)?
+    var onRotateKnob: ((CGPoint, UIGestureRecognizer.State) -> Void)?
+    var onAction: ((Action) -> Void)?
 
     private let border = CAShapeLayer()
-    private let knob = UIView()
+    private let resizeKnob = UIView()
+    private let rotateKnob = UIImageView()
+    private let rotateStem = UIView()
     private let deleteButton = UIButton(type: .system)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor.systemIndigo.withAlphaComponent(0.06)
+        backgroundColor = UIColor.systemIndigo.withAlphaComponent(0.05)
 
         border.fillColor = nil
         border.strokeColor = UIColor.systemIndigo.cgColor
@@ -383,25 +786,43 @@ final class ImageHandleView: UIView {
         border.lineDashPattern = [7, 5]
         layer.addSublayer(border)
 
-        knob.backgroundColor = .systemIndigo
-        knob.layer.cornerRadius = 13
-        knob.layer.borderColor = UIColor.white.cgColor
-        knob.layer.borderWidth = 3
-        knob.layer.shadowOpacity = 0.25
-        knob.layer.shadowRadius = 4
-        knob.layer.shadowOffset = CGSize(width: 0, height: 2)
-        addSubview(knob)
+        rotateStem.backgroundColor = .systemIndigo
+        addSubview(rotateStem)
+
+        for knob in [resizeKnob, rotateKnob] as [UIView] {
+            knob.backgroundColor = .systemIndigo
+            knob.layer.cornerRadius = 14
+            knob.layer.borderColor = UIColor.white.cgColor
+            knob.layer.borderWidth = 3
+            knob.layer.shadowOpacity = 0.25
+            knob.layer.shadowRadius = 4
+            knob.layer.shadowOffset = CGSize(width: 0, height: 2)
+            knob.isUserInteractionEnabled = true
+            addSubview(knob)
+        }
+        rotateKnob.image = UIImage(systemName: "arrow.clockwise",
+                                   withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .bold))
+        rotateKnob.tintColor = .white
+        rotateKnob.contentMode = .center
 
         let config = UIImage.SymbolConfiguration(pointSize: 26, weight: .semibold)
         deleteButton.setImage(UIImage(systemName: "xmark.circle.fill", withConfiguration: config), for: .normal)
         deleteButton.tintColor = .systemRed
         deleteButton.backgroundColor = .white
         deleteButton.layer.cornerRadius = 15
-        deleteButton.addAction(UIAction { [weak self] _ in self?.onDelete?() }, for: .touchUpInside)
+        deleteButton.addAction(UIAction { [weak self] _ in self?.onAction?(.delete) }, for: .touchUpInside)
         addSubview(deleteButton)
 
-        addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(pan(_:))))
-        knob.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(resizePan(_:))))
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(pan(_:)))
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinch(_:)))
+        let rotation = UIRotationGestureRecognizer(target: self, action: #selector(rotation(_:)))
+        for g in [pan, pinch, rotation] as [UIGestureRecognizer] {
+            g.delegate = self
+            addGestureRecognizer(g)
+        }
+        resizeKnob.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(resizePan(_:))))
+        rotateKnob.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(rotatePan(_:))))
+        addInteraction(UIContextMenuInteraction(delegate: self))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -410,23 +831,62 @@ final class ImageHandleView: UIView {
         super.layoutSubviews()
         border.frame = bounds
         border.path = UIBezierPath(roundedRect: bounds, cornerRadius: 6).cgPath
-        knob.frame = CGRect(x: bounds.maxX - 13, y: bounds.maxY - 13, width: 26, height: 26)
+        resizeKnob.frame = CGRect(x: bounds.maxX - 14, y: bounds.maxY - 14, width: 28, height: 28)
+        rotateKnob.frame = CGRect(x: bounds.midX - 14, y: -44, width: 28, height: 28)
+        rotateStem.frame = CGRect(x: bounds.midX - 1, y: -16, width: 2, height: 16)
         deleteButton.frame = CGRect(x: bounds.maxX - 15, y: -15, width: 30, height: 30)
     }
 
     /// Griffe ragen über den Rand hinaus und sollen trotzdem antippbar sein.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        bounds.insetBy(dx: -18, dy: -18).contains(point)
+        bounds.insetBy(dx: -18, dy: -18).contains(point) || rotateKnob.frame.insetBy(dx: -10, dy: -10).contains(point)
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        g.view === other.view
     }
 
     @objc private func pan(_ g: UIPanGestureRecognizer) {
         onMove?(g.translation(in: superview), g.state)
+        g.setTranslation(.zero, in: superview)
+    }
+
+    @objc private func pinch(_ g: UIPinchGestureRecognizer) {
+        onPinch?(g.scale, g.state)
+        g.scale = 1
+    }
+
+    @objc private func rotation(_ g: UIRotationGestureRecognizer) {
+        onRotate?(g.rotation, g.state)
+        g.rotation = 0
     }
 
     @objc private func resizePan(_ g: UIPanGestureRecognizer) {
-        onResize?(g.translation(in: superview), g.state)
+        onResizeKnob?(g.location(in: superview), g.state)
+    }
+
+    @objc private func rotatePan(_ g: UIPanGestureRecognizer) {
+        onRotateKnob?(g.location(in: superview), g.state)
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            let act: (String, String, Action, UIMenuElement.Attributes) -> UIAction = { title, symbol, action, attributes in
+                UIAction(title: title, image: UIImage(systemName: symbol), attributes: attributes) { _ in self?.onAction?(action) }
+            }
+            return UIMenu(children: [
+                act("Duplizieren", "plus.square.on.square", .duplicate, []),
+                act("Nach vorne", "square.3.layers.3d.top.filled", .front, []),
+                act("Nach hinten", "square.3.layers.3d.bottom.filled", .back, []),
+                act("Drehung zurücksetzen", "arrow.counterclockwise", .resetRotation, []),
+                act("Löschen", "trash", .delete, .destructive),
+            ])
+        }
     }
 }
+
+// MARK: - SwiftUI-Brücke
 
 struct PageCanvas: UIViewRepresentable {
     @ObservedObject var model: EditorModel
@@ -449,6 +909,7 @@ struct PageCanvas: UIViewRepresentable {
         host.onLasso = { [weak model] rect, drawing in model?.handleLasso(rect: rect, drawing: drawing, pageID: pageID) }
         host.onItemsChange = { [weak model] items in model?.setItems(items, pageID: pageID) }
         host.onFlip = { [weak model] delta in model?.flip(delta) }
+        host.onImageTap = { [weak model] in model?.startImageEditing() }
         model.host = host
         return host
     }
@@ -457,6 +918,8 @@ struct PageCanvas: UIViewRepresentable {
         host.update(page: page)
         host.aiMode = model.aiMode
         host.imageEditMode = model.imageEditMode
+        host.geometryTool = model.geometryTool
+        if host.rulerActive != model.rulerActive { host.rulerActive = model.rulerActive }
         if host.fingerDrawing != fingerDrawing { host.fingerDrawing = fingerDrawing }
         host.flipDirection = flipDirection
         let action = pencilAction
