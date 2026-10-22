@@ -277,7 +277,9 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        canvas.frame = bounds
+        // Nicht über frame: Beim Blättern ist die Zeichenfläche kurz verschoben (transform)
+        canvas.bounds.size = bounds.size
+        canvas.center = CGPoint(x: bounds.midX, y: bounds.midY)
         imageOverlay.frame = bounds
         geometry.frame = bounds
         lasso.frame = bounds
