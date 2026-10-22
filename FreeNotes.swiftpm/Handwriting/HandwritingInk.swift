@@ -6,13 +6,14 @@ enum HandwritingInk {
     /// Schreibtempo eines Stifts in Seitenpunkten pro Sekunde bei x-Höhe 12,5 (≈ 4 cm/s).
     static let baseSpeed: Double = 190
 
-    /// Die KI schreibt immer in Schwarz (wie ein normaler Stift), unabhängig von der gewählten Stiftfarbe.
-    static let color = InkSettings.penColors[0]
+    /// Die KI schreibt immer mit schwarzem Kuli, unabhängig von der gewählten Stiftfarbe.
+    static let color = UIColor.black
 
-    /// Strichstärke passend zum eingestellten Stift und zur Schriftgröße.
+    /// Strichstärke wie ein normaler Kuli (mindestens wie der Stift auf »Mittel«), bei kleiner Schrift nur wenig dünner –
+    /// sehr dünne schwarze Striche wirken sonst grau.
     static func pointSize(penWidth: CGFloat, xHeight: Double) -> CGFloat {
-        let base = max(1.6, penWidth * 0.62)
-        return base * CGFloat(min(1.15, max(0.55, xHeight / 12.5)))
+        let base = max(3.4, penWidth * 0.95)
+        return base * CGFloat(min(1.1, max(0.85, xHeight / 12.5)))
     }
 
     static func pkStroke(_ stroke: HWStroke, ink: PKInk, size: CGFloat, xHeight: Double, date: Date) -> PKStroke? {
@@ -30,12 +31,13 @@ enum HandwritingInk {
         for (i, p) in points.enumerated() {
             if i > 0 { distance += hypot(Double(p.x - points[i - 1].x), Double(p.y - points[i - 1].y)) }
             let t = distance / total
-            // Am Anfang und Ende leicht dünner, wie beim Aufsetzen und Abheben des Stifts
-            let taper = min(1, 0.78 + t * 2.2) * min(1, 0.86 + (1 - t) * 1.6)
+            // Am Anfang und Ende kaum merklich dünner, wie beim Aufsetzen und Abheben des Stifts
+            let taper = min(1, 0.9 + t * 2) * min(1, 0.93 + (1 - t) * 1.5)
             let w = size * CGFloat(stroke.weight * taper)
+            // Voller Druck und volle Deckkraft: sattes Schwarz wie ein Kuli (wenig Druck macht den Pen-Strich heller)
             strokePoints.append(PKStrokePoint(location: p, timeOffset: distance / speed,
                                               size: CGSize(width: w, height: w), opacity: 1,
-                                              force: CGFloat(0.6 + 0.4 * taper), azimuth: 0, altitude: .pi / 2))
+                                              force: 1, azimuth: 0, altitude: .pi / 2))
         }
         return PKStroke(ink: ink, path: PKStrokePath(controlPoints: strokePoints, creationDate: date))
     }
