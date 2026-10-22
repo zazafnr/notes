@@ -31,7 +31,7 @@ struct NotebookEditorView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color(uiColor: .secondarySystemBackground).ignoresSafeArea()
+            Color(uiColor: .systemGray5).ignoresSafeArea()
 
             if let page = model.currentPage {
                 PageCanvas(model: model, store: store, page: page, fingerDrawing: settings.fingerDrawing,
@@ -224,6 +224,10 @@ struct NotebookEditorView: View {
             }
             Button { model.goTo(model.pageIndex + 1) } label: { ToolbarIcon(symbol: "chevron.down") }
                 .disabled(model.pageIndex >= count - 1)
+            Button { model.toggleWholePage() } label: {
+                ToolbarIcon(symbol: model.wholePage ? "arrow.left.and.right.square" : "rectangle.portrait.arrowtriangle.2.inward")
+            }
+            .help(model.wholePage ? "Breite füllen" : "Ganze Seite zeigen")
             Menu {
                 ForEach(PaperStyle.allCases) { style in
                     Button { model.addPage(style) } label: { Label("Neue Seite: \(style.title)", systemImage: style.symbol) }

@@ -21,6 +21,7 @@ final class EditorModel: ObservableObject {
     @Published var imageEditMode = false
     @Published var geometryTool: GeometryTool?
     @Published var rulerActive = false
+    @Published var wholePage = false
     @Published var snapshot: LassoSnapshot?
 
     weak var host: PageCanvasHost?
@@ -291,6 +292,12 @@ final class EditorModel: ObservableObject {
                 imageEditMode = false
             }
         }
+        Haptics.tap()
+    }
+
+    /// Zwischen »Breite füllen« und »ganze Seite sehen« umschalten.
+    func toggleWholePage() {
+        wholePage.toggle()
         Haptics.tap()
     }
 

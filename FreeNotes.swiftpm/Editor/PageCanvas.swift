@@ -129,7 +129,10 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     var onImageTap: (() -> Void)?
 
     private var didInitialLayout = false
-    private let insets = UIEdgeInsets(top: 84, left: 28, bottom: 140, right: 28)
+    /// Platz für die Werkzeugleiste oben und zum Weiterscrollen unten; seitlich kein Rand.
+    private let insets = UIEdgeInsets(top: 72, left: 0, bottom: 120, right: 0)
+    /// Breite füllen (Standard) oder ganze Seite sichtbar.
+    private var fitsWholePage = false
     private var swipes: [UISwipeGestureRecognizer] = []
     private var imageTap: UITapGestureRecognizer?
 
@@ -256,24 +259,69 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         lasso.frame = bounds
         guard bounds.width > 100 else { return }
 
-        let fit = (bounds.width - insets.left - insets.right) / CGFloat(page.width)
-        let wasAtFit = abs(canvas.zoomScale - canvas.minimumZoomScale) < 0.001
-        canvas.minimumZoomScale = fit
-        canvas.maximumZoomScale = fit * 6
-        if !didInitialLayout || wasAtFit {
-            canvas.zoomScale = fit
+        let widthFit = widthFitScale
+        let wasAtWidthFit = abs(canvas.zoomScale - lastWidthFit) < 0.001
+        let wasAtPageFit = abs(canvas.zoomScale - canvas.minimumZoomScale) < 0.001 && fitsWholePage
+        canvas.minimumZoomScale = min(widthFit, pageFitScale)
+        canvas.maximumZoomScale = widthFit * 6
+        if !didInitialLayout || wasAtWidthFit {
+            canvas.zoomScale = fitsWholePage ? pageFitScale : widthFit
+        } else if wasAtPageFit {
+            canvas.zoomScale = pageFitScale
         }
+        lastWidthFit = widthFit
         updateForZoom()
         if !didInitialLayout {
-            canvas.contentOffset = CGPoint(x: -insets.left, y: -insets.top)
+            canvas.contentOffset = CGPoint(x: -canvas.contentInset.left, y: -canvas.contentInset.top)
             didInitialLayout = true
         }
         imageOverlay.layoutHandles()
     }
 
+    private var lastWidthFit: CGFloat = 0
+
+    /// Zoom, bei dem die Seite genau die Breite füllt.
+    private var widthFitScale: CGFloat {
+        max(bounds.width - insets.left - insets.right, 1) / CGFloat(page.width)
+    }
+
+    /// Zoom, bei dem die ganze Seite auf den Bildschirm passt (auch im Querformat).
+    private var pageFitScale: CGFloat {
+        let h = max(bounds.height - insets.top - 16, 1) / CGFloat(page.height)
+        return min(h, widthFitScale)
+    }
+
+    var wholePageMode: Bool { fitsWholePage }
+
+    /// Zwischen »Breite füllen« und »ganze Seite« wechseln.
+    func setWholePage(_ on: Bool, animated: Bool) {
+        fitsWholePage = on
+        guard didInitialLayout else { return }
+        let target = on ? pageFitScale : widthFitScale
+        if animated {
+            UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0) {
+                self.applyZoom(target)
+            }
+        } else {
+            applyZoom(target)
+        }
+    }
+
+    private func applyZoom(_ target: CGFloat) {
+        canvas.zoomScale = target
+        updateForZoom()
+        canvas.contentOffset = CGPoint(x: -canvas.contentInset.left, y: -canvas.contentInset.top)
+    }
+
     private func updateForZoom() {
         let z = canvas.zoomScale
         let size = CGSize(width: CGFloat(page.width) * z, height: CGFloat(page.height) * z)
+        // Kleiner als der Bildschirm: Seite mittig halten
+        let side = max((bounds.width - size.width) / 2, insets.left)
+        let free = bounds.height - size.height - insets.top - insets.bottom
+        let extra = max(free / 2, 0)
+        let newInsets = UIEdgeInsets(top: insets.top + extra, left: side, bottom: insets.bottom + extra, right: side)
+        if canvas.contentInset != newInsets { canvas.contentInset = newInsets }
         canvas.contentSize = size
         paper.bounds = CGRect(origin: .zero, size: page.size)
         paper.transform = CGAffineTransform(scaleX: z, y: z)
@@ -310,17 +358,17 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
                                    targetContentOffset: UnsafeMutablePointer<CGPoint>) {
         guard flipDirection == .vertical, !aiMode, !imageEditMode, geometryTool == nil else { return }
         let y = scrollView.contentOffset.y
-        let maxY = scrollView.contentSize.height - scrollView.bounds.height + insets.bottom
+        let maxY = scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom
         if y > maxY + 90 {
             onFlip?(1)
-        } else if y < -insets.top - 90 {
+        } else if y < -scrollView.contentInset.top - 90 {
             onFlip?(-1)
         }
     }
 
     @objc private func handleSwipe(_ swipe: UISwipeGestureRecognizer) {
         guard flipDirection == .horizontal,
-              abs(canvas.zoomScale - canvas.minimumZoomScale) < 0.01 else { return }
+              canvas.zoomScale <= widthFitScale + 0.01 else { return }
         onFlip?(swipe.direction == .left ? 1 : -1)
     }
 
@@ -920,6 +968,7 @@ struct PageCanvas: UIViewRepresentable {
         host.imageEditMode = model.imageEditMode
         host.geometryTool = model.geometryTool
         if host.rulerActive != model.rulerActive { host.rulerActive = model.rulerActive }
+        if host.wholePageMode != model.wholePage { host.setWholePage(model.wholePage, animated: true) }
         if host.fingerDrawing != fingerDrawing { host.fingerDrawing = fingerDrawing }
         host.flipDirection = flipDirection
         let action = pencilAction
