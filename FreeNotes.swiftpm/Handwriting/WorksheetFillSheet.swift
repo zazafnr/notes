@@ -1,8 +1,8 @@
 import SwiftUI
 import Vision
 
-/// Arbeitsblatt ausfüllen: Die KI findet die Lücken und Schreiblinien, die Antworten werden
-/// danach in deiner Handschrift genau dort eingetragen.
+/// Arbeitsblatt ausfüllen: Die KI liest den (eingekreisten) Ausschnitt scharf, gibt die Stellen an,
+/// die App rastet sie auf Linien und Tabellenzellen ein, dann wird in deiner Handschrift eingetragen.
 struct WorksheetFillSheet: View {
     @ObservedObject var model: EditorModel
     /// Bereits vorhandene Lösungen (z. B. aus dem Chat), sonst löst die KI selbst.
@@ -11,48 +11,37 @@ struct WorksheetFillSheet: View {
     var fromBook = false
     /// Wo die eingekreiste Aufgabe liegt (Anteile 0…1): Nur dort wird eingetragen.
     var taskArea: CGRect? = nil
-    /// Vergrößerter Ausschnitt der eingekreisten Aufgabe (besser lesbar für die KI).
-    var taskImage: UIImage? = nil
     /// Keine passenden Stellen gefunden: Lösung stattdessen als Heft-Eintrag schreiben.
     var onFallback: ((String) -> Void)? = nil
     @EnvironmentObject private var settings: AISettings
     @Environment(\.dismiss) private var dismiss
 
-    @State private var pageImage: UIImage?
+    enum Stage: Equatable {
+        case reading, thinking, answering, done
+    }
+
+    @State private var crop: WorksheetCrop?
+    @State private var cropImage: UIImage?
     @State private var fields: [WorksheetField] = []
-    @State private var working = true
+    @State private var stage: Stage = .reading
+    @State private var startedAt = Date()
     @State private var error: String?
     @State private var task: Task<Void, Never>?
+    @State private var watchdog: Task<Void, Never>?
+    @State private var timedOut = false
+    @State private var attempt = 0
 
-    /// Bildpixel pro Seitenpunkt (lange Seite bleibt unter 1568 px, dann rechnet die KI in Original-Pixeln).
-    private var imageScale: CGFloat {
-        guard let page = model.currentPage else { return 1 }
-        return min(1.4, 1560 / CGFloat(max(page.width, page.height)))
-    }
+    /// Länger wartet niemand: danach abbrechen und »Nochmal« anbieten.
+    private let timeout: UInt64 = 80
+
+    private var working: Bool { stage != .done }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    pagePreview
-                    if let error {
-                        Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .font(.subheadline)
-                    }
-                    if !working, fields.isEmpty, let solutions, let onFallback {
-                        Button {
-                            dismiss()
-                            Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 450_000_000)
-                                onFallback(solutions)
-                            }
-                        } label: {
-                            Label("Lösung stattdessen auf eine neue Heftseite schreiben", systemImage: "pencil.and.scribble")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
+                    preview
+                    if let error { errorBox(error) }
                     if !fields.isEmpty { fieldList }
                 }
                 .padding(20)
@@ -63,7 +52,7 @@ struct WorksheetFillSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Abbrechen") {
-                        task?.cancel()
+                        cancelRunning()
                         dismiss()
                     }
                 }
@@ -82,39 +71,50 @@ struct WorksheetFillSheet: View {
                 }
             }
         }
-        .onAppear(perform: start)
-        .onDisappear { task?.cancel() }
+        .onAppear { start() }
+        .onDisappear { cancelRunning() }
     }
 
-    private var pagePreview: some View {
+    // MARK: Teile
+
+    private var preview: some View {
         ZStack {
-            if let pageImage, let page = model.currentPage {
-                Image(uiImage: pageImage)
+            if let cropImage, let crop {
+                Image(uiImage: cropImage)
                     .resizable()
                     .scaledToFit()
                     .overlay {
                         GeometryReader { geo in
-                            let s = geo.size.width / CGFloat(page.width)
-                            if let area = taskArea {
+                            let s = geo.size.width / max(crop.pixelSize.width, 1)
+                            if let area = taskArea, let page = model.currentPage {
                                 // Eingekreiste Aufgabe
+                                let r = crop.toPixels(CGRect(x: area.minX * page.width, y: area.minY * page.height,
+                                                             width: area.width * page.width, height: area.height * page.height))
                                 RoundedRectangle(cornerRadius: 6)
                                     .stroke(Theme.aiColors[1], style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                                    .frame(width: area.width * geo.size.width, height: area.height * geo.size.height)
-                                    .offset(x: area.minX * geo.size.width, y: area.minY * geo.size.height)
+                                    .frame(width: r.width * s, height: r.height * s)
+                                    .offset(x: r.minX * s, y: r.minY * s)
                             }
                             ForEach(Array(fields.enumerated()), id: \.element.id) { index, field in
-                                let r = field.rect
+                                let r = crop.toPixels(field.rect)
                                 ZStack(alignment: .topLeading) {
                                     RoundedRectangle(cornerRadius: 4)
                                         .fill(Theme.accent.opacity(0.12))
                                     RoundedRectangle(cornerRadius: 4)
                                         .strokeBorder(Theme.accent, lineWidth: 1.5)
                                     Text("\(index + 1)")
-                                        .font(.system(size: 10, weight: .bold))
+                                        .font(.system(size: 11, weight: .bold))
                                         .foregroundStyle(.white)
-                                        .padding(3)
+                                        .padding(4)
                                         .background(Theme.accent, in: Circle())
-                                        .offset(x: -8, y: -8)
+                                        .offset(x: -9, y: -9)
+                                    Text(field.text)
+                                        .font(.system(size: max(9, min(16, r.height * s * 0.45))))
+                                        .foregroundStyle(Theme.accent)
+                                        .lineLimit(2)
+                                        .padding(.leading, 6)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                                        .padding(.bottom, 2)
                                 }
                                 .frame(width: r.width * s, height: r.height * s)
                                 .offset(x: r.minX * s, y: r.minY * s)
@@ -122,21 +122,67 @@ struct WorksheetFillSheet: View {
                         }
                     }
             } else {
-                Color.white.frame(height: 400)
+                Color.white.frame(height: 300)
             }
-            if working {
-                VStack(spacing: 10) {
-                    ProgressView()
-                    Text(solutions == nil ? "KI löst das Blatt und sucht die Lücken …" : "KI sucht die passenden Stellen …")
-                        .font(.subheadline.weight(.medium))
-                }
-                .padding(18)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            }
+            if working { progressBox }
         }
         .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+    }
+
+    private var progressBox: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+            Text(stageText).font(.subheadline.weight(.medium))
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text("\(Int(context.date.timeIntervalSince(startedAt))) s")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(18)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var stageText: String {
+        switch stage {
+        case .reading: return "Lese den Zettel …"
+        case .thinking: return solutions == nil ? "KI löst die Aufgabe …" : "KI sucht die passenden Stellen …"
+        case .answering: return "KI trägt die Antworten zusammen …"
+        case .done: return ""
+        }
+    }
+
+    private func errorBox(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.subheadline)
+            HStack {
+                Button {
+                    start(retry: true)
+                } label: {
+                    Label("Nochmal versuchen", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                if let solutions, let onFallback {
+                    Button {
+                        dismiss()
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 450_000_000)
+                            onFallback(solutions)
+                        }
+                    } label: {
+                        Label("Auf neue Heftseite schreiben", systemImage: "pencil.and.scribble")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var fieldList: some View {
@@ -167,46 +213,124 @@ struct WorksheetFillSheet: View {
 
     // MARK: Ablauf
 
-    private func start() {
-        guard task == nil, let page = model.currentPage else { return }
-        let scale = imageScale
-        let image = model.currentPageImage(scale: scale)
-        pageImage = image
-        guard let image, let cg = image.cgImage else {
-            working = false
-            error = "Seite konnte nicht gelesen werden."
+    private func cancelRunning() {
+        watchdog?.cancel()
+        task?.cancel()
+    }
+
+    private func start(retry: Bool = false) {
+        guard let page = model.currentPage else { return }
+        if !retry, task != nil { return }
+        cancelRunning()
+        attempt += 1
+        error = nil
+        timedOut = false
+        fields = []
+        stage = .reading
+        startedAt = Date()
+
+        let crop = WorksheetCrop(area: taskArea, pageSize: page.size)
+        guard let rendered = model.renderRegion(crop.region, scale: crop.scale), let cg = rendered.cgImage else {
+            stage = .done
+            error = "Die Seite konnte nicht gelesen werden."
             return
         }
-        let pixelSize = CGSize(width: CGFloat(page.width) * scale, height: CGFloat(page.height) * scale)
-        let solutions = solutions
+        self.crop = crop
+        cropImage = UIImage(cgImage: cg)
+        let pixelSize = CGSize(width: cg.width, height: cg.height)
         let pageSize = page.size
         let taskRect = taskArea.map {
-            CGRect(x: $0.minX * pixelSize.width, y: $0.minY * pixelSize.height,
-                   width: $0.width * pixelSize.width, height: $0.height * pixelSize.height)
+            crop.toPixels(CGRect(x: $0.minX * pageSize.width, y: $0.minY * pageSize.height,
+                                 width: $0.width * pageSize.width, height: $0.height * pageSize.height))
         }
-        task = Task {
-            let ocr = await Task.detached(priority: .userInitiated) { WorksheetOCR.lines(in: cg, size: pixelSize) }.value
+        let solutions = solutions
+        // Beim Wiederholen schneller (weniger Nachdenken), Zuordnen fertiger Lösungen ist immer schnell
+        let effort = solutions != nil || retry ? "low" : "medium"
+        let unit = Double(crop.scale)
+
+        let running = Task {
+            let prepared = await Task.detached(priority: .userInitiated) { () -> ([HandwritingPrompts.OCRLine], [Bool], UIImage) in
+                let ocr = WorksheetOCR.lines(in: cg, size: pixelSize)
+                let ink = WorksheetVision.gray(from: cg).map(WorksheetVision.inkMask) ?? []
+                return (ocr, ink, WorksheetGrid.image(from: cg))
+            }.value
             guard !Task.isCancelled else { return }
+            stage = .thinking
             do {
-                let detail = taskImage?.jpegBase64(maxSide: 1400)
-                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: ocr, solutions: solutions, taskRect: taskRect,
-                                                            hasDetailImage: detail != nil)
-                guard let base64 = image.jpegBase64(maxSide: 1600) else { throw AIError.empty }
-                let raw = try await AIRequest.text(system: HandwritingPrompts.worksheetSystem, user: user,
-                                                   images: [base64] + (detail.map { [$0] } ?? []), settings: settings, effort: "medium")
+                guard let base64 = prepared.2.jpegBase64(maxSide: 1600) else { throw AIError.empty }
+                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: prepared.0, solutions: solutions, taskRect: taskRect)
+                let raw = try await AIRequest.text(system: HandwritingPrompts.worksheetSystem, user: user, images: [base64],
+                                                   settings: settings, effort: effort) { _ in
+                    if stage == .thinking { stage = .answering }
+                }
                 guard !Task.isCancelled else { return }
-                let parsed = WorksheetField.parse(raw, imageScale: scale, pageSize: pageSize)
+                let w = Int(pixelSize.width), h = Int(pixelSize.height)
+                let page = CGRect(origin: .zero, size: pageSize)
+                let parsed: [WorksheetField] = WorksheetField.pixelFields(raw).compactMap { item in
+                    let snapped = WorksheetVision.snap(item.rect, ink: prepared.1, width: w, height: h, unit: unit)
+                    let rect = crop.toPage(snapped).intersection(page)
+                    guard !rect.isNull, rect.width > 4, rect.height > 4 else { return nil }
+                    return WorksheetField(text: item.text, rect: rect)
+                }
+                watchdog?.cancel()
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { fields = parsed }
                 if parsed.isEmpty {
-                    error = solutions == nil ? "Keine Lücken gefunden. Ist die Seite ein Arbeitsblatt?"
-                        : "Auf der Seite ist kein Platz für die Lösung gefunden worden."
+                    error = "Die KI hat keine passende Stelle angegeben. Versuch es nochmal oder kreise die Aufgabe etwas größer ein."
                 }
-            } catch is CancellationError {
-                return
             } catch {
-                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                watchdog?.cancel()
+                if timedOut {
+                    self.error = "Die KI hat zu lange gebraucht (über \(timeout) s). Beim nächsten Versuch denkt sie kürzer nach."
+                } else if error is CancellationError || Task.isCancelled {
+                    return
+                } else {
+                    self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                }
             }
-            working = false
+            stage = .done
+        }
+        task = running
+        watchdog = Task {
+            try? await Task.sleep(nanoseconds: timeout * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            timedOut = true
+            running.cancel()
+        }
+    }
+}
+
+/// Helles Koordinaten-Raster über dem Ausschnitt: Die KI liest daran Pixel-Positionen genauer ab.
+enum WorksheetGrid {
+    static func image(from cg: CGImage, step: Int = 100) -> UIImage {
+        let size = CGSize(width: cg.width, height: cg.height)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIImage(cgImage: cg).draw(in: CGRect(origin: .zero, size: size))
+            let ctx = context.cgContext
+            ctx.setStrokeColor(UIColor(red: 0.2, green: 0.6, blue: 1, alpha: 0.28).cgColor)
+            ctx.setLineWidth(1)
+            for x in stride(from: step, to: cg.width, by: step) {
+                ctx.move(to: CGPoint(x: x, y: 0))
+                ctx.addLine(to: CGPoint(x: x, y: cg.height))
+            }
+            for y in stride(from: step, to: cg.height, by: step) {
+                ctx.move(to: CGPoint(x: 0, y: y))
+                ctx.addLine(to: CGPoint(x: cg.width, y: y))
+            }
+            ctx.strokePath()
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: UIColor(red: 0.1, green: 0.45, blue: 0.95, alpha: 0.9),
+                .backgroundColor: UIColor.white.withAlphaComponent(0.8),
+            ]
+            for x in stride(from: step, to: cg.width, by: step) {
+                ("\(x)" as NSString).draw(at: CGPoint(x: x + 2, y: 2), withAttributes: attributes)
+            }
+            for y in stride(from: step, to: cg.height, by: step) {
+                ("\(y)" as NSString).draw(at: CGPoint(x: 2, y: y + 2), withAttributes: attributes)
+            }
         }
     }
 }

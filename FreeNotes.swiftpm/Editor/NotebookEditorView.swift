@@ -133,7 +133,7 @@ struct NotebookEditorView: View {
                      onFill: {
                          model.aiMode = false
                          openWorksheet(solutions: nil, bookPage: snap.sourcePage, pageID: snap.pageID,
-                                       area: snap.sourceArea, taskImage: snap.image)
+                                       area: snap.sourceArea)
                      })
         }
         .photosPicker(isPresented: $showPhotos, selection: $photoItem, matching: .images)
@@ -175,13 +175,13 @@ struct NotebookEditorView: View {
             HandwritingWriteSheet(model: model, request: request) {
                 if let source = request.worksheetSource {
                     openWorksheet(solutions: request.answer, bookPage: source.bookPage, pageID: source.pageID,
-                                  area: source.area, taskImage: source.taskImage)
+                                  area: source.area)
                 }
             }
         }
         .sheet(item: $worksheet) { request in
             WorksheetFillSheet(model: model, solutions: request.solutions, fromBook: request.fromBook,
-                               taskArea: request.taskArea, taskImage: request.taskImage) { text in
+                               taskArea: request.taskArea) { text in
                 // Keine Lücken auf der Seite: Lösung stattdessen wie im Heft auf eine neue Seite schreiben
                 writeRequest = WriteRequest(answer: text)
             }
@@ -218,7 +218,7 @@ struct NotebookEditorView: View {
         case .worksheet:
             let source = worksheetSource(for: question)
             openWorksheet(solutions: answer.text, bookPage: source?.bookPage, pageID: source?.pageID,
-                          area: source?.area, taskImage: source?.taskImage)
+                          area: source?.area)
         case .card:
             model.insertAnswer(answer.text)
         }
@@ -227,12 +227,11 @@ struct NotebookEditorView: View {
     /// Woher die Aufgabe stammt (Buchseite oder eingekreist auf einer Heftseite).
     private func worksheetSource(for question: ChatMessage?) -> WorksheetSource? {
         guard let question else { return nil }
-        let crop = question.images.first.flatMap { store.chatImage($0) }
         if let name = question.sourcePage, let page = store.chatImage(name) {
-            return WorksheetSource(bookPage: page, pageID: nil, area: question.sourceArea, taskImage: crop)
+            return WorksheetSource(bookPage: page, pageID: nil, area: question.sourceArea)
         }
         if let id = question.sourcePageID, model.notebook?.pages.contains(where: { $0.id == id }) == true {
-            return WorksheetSource(bookPage: nil, pageID: id, area: question.sourceArea, taskImage: crop)
+            return WorksheetSource(bookPage: nil, pageID: id, area: question.sourceArea)
         }
         return nil
     }
@@ -244,13 +243,13 @@ struct NotebookEditorView: View {
     }
 
     /// Zettel ausfüllen: Buchseite einfügen bzw. zur Seite mit der Aufgabe blättern, dann die Felder suchen.
-    private func openWorksheet(solutions: String?, bookPage: UIImage?, pageID: UUID?, area: CGRect?, taskImage: UIImage?) {
+    private func openWorksheet(solutions: String?, bookPage: UIImage?, pageID: UUID?, area: CGRect?) {
         if let bookPage {
             model.addBackgroundPages([bookPage])
         } else if let pageID, let index = model.notebook?.pages.firstIndex(where: { $0.id == pageID }) {
             model.goTo(index)
         }
-        let request = WorksheetRequest(solutions: solutions, fromBook: bookPage != nil, taskArea: area, taskImage: taskImage)
+        let request = WorksheetRequest(solutions: solutions, fromBook: bookPage != nil, taskArea: area)
         // Kurz warten, bis das vorige Fenster zu ist (zwei Fenster gleichzeitig gehen nicht)
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 550_000_000)
@@ -503,7 +502,6 @@ struct WorksheetRequest: Identifiable {
     var fromBook = false
     /// Eingekreiste Aufgabe auf der Seite (Anteile 0…1).
     var taskArea: CGRect? = nil
-    var taskImage: UIImage? = nil
 }
 
 /// Herkunft einer Aufgabe, um die Antwort an der richtigen Stelle einzutragen.
@@ -511,7 +509,6 @@ struct WorksheetSource {
     var bookPage: UIImage?
     var pageID: UUID?
     var area: CGRect?
-    var taskImage: UIImage?
 }
 
 struct ShareItem: Identifiable {

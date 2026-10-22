@@ -453,6 +453,16 @@ final class EditorModel: ObservableObject {
         snapshot = LassoSnapshot(image: image, rect: rect, sourceArea: area, pageID: pageID)
     }
 
+    /// Ausschnitt der aktuellen Seite (mit Tinte), z. B. für das Ausfüllen eines Arbeitsblatts.
+    func renderRegion(_ rect: CGRect, scale: CGFloat) -> UIImage? {
+        guard let page = currentPage else { return nil }
+        flush()
+        let drawing = host?.canvas.drawing ?? store.loadDrawing(notebook: notebookID, page: page.id)
+        return PageRenderer.render(page: page, drawing: drawing,
+                                   image: { [store, notebookID] in store.image($0, notebook: notebookID) },
+                                   rect: rect, scale: scale)
+    }
+
     func currentPageImage(scale: CGFloat = 1.4) -> UIImage? {
         guard let page = currentPage else { return nil }
         flush()

@@ -83,23 +83,25 @@ enum HandwritingPrompts {
     // MARK: Arbeitsblatt ausfüllen
 
     static let worksheetSystem = """
-    Du hilfst einem Schüler, ein Arbeitsblatt auszufüllen. Du siehst das Blatt als Bild und bekommst die erkannten \
-    gedruckten Textzeilen mit ihrer Position. Finde jede Stelle, an die der Schüler etwas schreiben muss \
-    (Lücken, Schreiblinien, leere Tabellenfelder, Kästchen, Platz unter einer Frage), und löse sie.
+    Du hilfst einem Schüler, ein Arbeitsblatt auszufüllen. Du siehst einen Ausschnitt des Blatts als Bild \
+    (mit hellblauem Koordinaten-Raster, nur zum Ablesen) und bekommst die erkannten gedruckten Textzeilen mit Position. \
+    Finde die Stellen, an die der Schüler schreiben muss (Lücken, Schreiblinien, leere Tabellenfelder, Kästchen, \
+    Platz unter einer Frage), und trage die Lösungen ein.
 
     Antworte ausschließlich mit JSON in genau diesem Format, ohne weiteren Text:
     {"felder":[{"text":"Antwort","x":0,"y":0,"w":0,"h":0}]}
 
-    - x, y, w, h: das freie Rechteck in Bildpixeln, in das die Antwort geschrieben wird (x/y = linke obere Ecke).
-    - Bei einer Schreiblinie oder Lücke »_____« liegt die Unterkante des Rechtecks genau auf der Linie, Höhe etwa so hoch wie die gedruckte Schrift.
-    - Bei mehreren Schreiblinien untereinander: ein Rechteck über alle Linien.
+    - x, y, w, h: das freie Rechteck in Bildpixeln, in das die Antwort geschrieben wird (x/y = linke obere Ecke). \
+    Lies die Werte am Raster ab (Linien alle 100 Pixel, am Rand beschriftet).
+    - Schreiblinie oder Lücke »_____«: Unterkante genau auf der Linie, Höhe etwa so hoch wie die gedruckte Schrift.
+    - Tabelle: ein Rechteck pro leerer Zelle, genau innerhalb der Zellränder.
+    - Mehrere Schreiblinien untereinander: ein Rechteck über alle Linien.
     - Das Rechteck darf keinen gedruckten Text überdecken.
     - text: so kurz, wie ein Schüler es hinschreibt (keine Erklärungen, kein Markdown, kein LaTeX; Brüche als 3/4, Potenzen als x²).
-    - Bereits ausgefüllte Stellen auslassen.
+    - Bereits ausgefüllte Stellen auslassen. Denk nicht lange nach – wenn du die Lösung weißt, schreib direkt das JSON.
     """
 
-    static func worksheetUser(imageSize: CGSize, ocr: [OCRLine], solutions: String?, taskRect: CGRect? = nil,
-                              hasDetailImage: Bool = false) -> String {
+    static func worksheetUser(imageSize: CGSize, ocr: [OCRLine], solutions: String?, taskRect: CGRect? = nil) -> String {
         var text = "Bildgröße: \(Int(imageSize.width)) × \(Int(imageSize.height)) Pixel.\n\nErkannte Textzeilen (x, y, w, h in Pixeln):\n"
         for line in ocr.prefix(160) {
             let r = line.rect
@@ -118,13 +120,37 @@ enum HandwritingPrompts {
         }
         if let r = taskRect {
             text += "\nDie Aufgabe, um die es geht, wurde eingekreist: Bereich [\(Int(r.minX)), \(Int(r.minY)), \(Int(r.width)), \(Int(r.height))] (x, y, w, h). "
-            text += "Felder nur für diese Aufgabe, in oder direkt an diesem Bereich – nichts auf dem Rest der Seite.\n"
-        }
-        if hasDetailImage {
-            text += "\nDas zweite Bild ist ein vergrößerter Ausschnitt der eingekreisten Aufgabe (nur zum besseren Lesen; Koordinaten immer im ersten Bild).\n"
+            text += "Felder nur für diese Aufgabe, in oder direkt an diesem Bereich – nichts außerhalb.\n"
         }
         text += "\nGib jetzt das JSON mit allen Feldern."
         return text
+    }
+
+    /// Alle innersten JSON-Objekte im Text (übersteht Code-Blöcke, Begleittext und abgeschnittene Antworten).
+    static func jsonObjects(in raw: String) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        var start: String.Index?
+        var inString = false
+        var escaped = false
+        for i in raw.indices {
+            let c = raw[i]
+            if inString {
+                if escaped { escaped = false } else if c == "\\" { escaped = true } else if c == "\"" { inString = false }
+                continue
+            }
+            if c == "\"" {
+                inString = true
+            } else if c == "{" {
+                start = i
+            } else if c == "}", let s = start {
+                if let data = String(raw[s...i]).data(using: .utf8),
+                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    result.append(object)
+                }
+                start = nil
+            }
+        }
+        return result
     }
 
     struct OCRLine: Equatable {
@@ -143,14 +169,9 @@ struct WorksheetField: Identifiable, Equatable {
         a.text == b.text && a.rect == b.rect
     }
 
-    /// Liest die JSON-Antwort der KI. `imageScale`: Bildpixel pro Seitenpunkt.
-    static func parse(_ raw: String, imageScale: CGFloat, pageSize: CGSize) -> [WorksheetField] {
-        guard let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}"), start < end,
-              let data = String(raw[start...end]).data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
-        let list = (object["felder"] ?? object["fields"] ?? object["answers"]) as? [[String: Any]] ?? []
-        let page = CGRect(origin: .zero, size: pageSize)
-        return list.compactMap { entry in
+    /// Felder in Bildpixeln aus der KI-Antwort.
+    static func pixelFields(_ raw: String) -> [(text: String, rect: CGRect)] {
+        HandwritingPrompts.jsonObjects(in: raw).compactMap { entry in
             guard let text = (entry["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
                 return nil
             }
@@ -160,12 +181,23 @@ struct WorksheetField: Identifiable, Equatable {
                 if let s = entry[key] as? String, let d = Double(s) { return CGFloat(d) }
                 return nil
             }
-            guard let x = number("x"), let y = number("y"), let w = number("w"), let h = number("h"),
-                  w > 2, h > 2, imageScale > 0 else { return nil }
-            let rect = CGRect(x: x / imageScale, y: y / imageScale, width: w / imageScale, height: h / imageScale)
+            guard let x = number("x"), let y = number("y"), let w = number("w"), let h = number("h"), w > 2, h > 2 else {
+                return nil
+            }
+            return (text, CGRect(x: x, y: y, width: w, height: h))
+        }
+    }
+
+    /// Liest die JSON-Antwort der KI. `imageScale`: Bildpixel pro Seitenpunkt.
+    static func parse(_ raw: String, imageScale: CGFloat, pageSize: CGSize) -> [WorksheetField] {
+        guard imageScale > 0 else { return [] }
+        let page = CGRect(origin: .zero, size: pageSize)
+        return pixelFields(raw).compactMap { field in
+            let r = field.rect
+            let rect = CGRect(x: r.minX / imageScale, y: r.minY / imageScale, width: r.width / imageScale, height: r.height / imageScale)
                 .intersection(page)
             guard !rect.isNull, rect.width > 4, rect.height > 4 else { return nil }
-            return WorksheetField(text: text, rect: rect)
+            return WorksheetField(text: field.text, rect: rect)
         }
     }
 }

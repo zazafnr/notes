@@ -222,3 +222,49 @@ final class WorksheetPromptTests: XCTestCase {
         XCTAssertFalse(plain.contains("eingekreist"))
     }
 }
+
+final class WorksheetVisionTests: XCTestCase {
+    func testCropMapping() {
+        let crop = WorksheetCrop(area: CGRect(x: 0.2, y: 0.3, width: 0.4, height: 0.1), pageSize: CGSize(width: 1000, height: 1414))
+        XCTAssertLessThanOrEqual(max(crop.pixelSize.width, crop.pixelSize.height), 1561)
+        XCTAssertGreaterThan(crop.scale, 2)
+        let r = CGRect(x: 300, y: 450, width: 100, height: 30)
+        let back = crop.toPage(crop.toPixels(r))
+        XCTAssertEqual(back.minX, r.minX, accuracy: 0.001)
+        XCTAssertEqual(back.height, r.height, accuracy: 0.001)
+        // Ganze Seite, wenn nichts eingekreist ist
+        let whole = WorksheetCrop(area: nil, pageSize: CGSize(width: 1000, height: 1414))
+        XCTAssertEqual(whole.region, CGRect(x: 0, y: 0, width: 1000, height: 1414))
+    }
+
+    func testSnapsOntoLineAndIntoCell() {
+        var img = WorksheetVision.Gray(width: 600, height: 300)
+        // Tabellenzeile: Linien bei y = 100 und y = 160 (2 px dick)
+        img.fill(CGRect(x: 50, y: 100, width: 500, height: 2))
+        img.fill(CGRect(x: 50, y: 160, width: 500, height: 2))
+        // Text in einer anderen Zeile (soll nicht als Linie gelten)
+        for i in 0..<30 { img.fill(CGRect(x: 60 + i * 15, y: 220, width: 8, height: 22)) }
+        let ink = WorksheetVision.inkMask(img)
+        // KI-Schätzung etwas zu tief und zu groß
+        let snapped = WorksheetVision.snap(CGRect(x: 100, y: 115, width: 300, height: 60), ink: ink, width: 600, height: 300, unit: 2)
+        XCTAssertLessThan(snapped.maxY, 160)
+        XCTAssertGreaterThan(snapped.maxY, 150)
+        XCTAssertGreaterThan(snapped.minY, 100)
+        // Keine Linie in der Nähe: bleibt unverändert
+        let free = CGRect(x: 100, y: 20, width: 200, height: 30)
+        XCTAssertEqual(WorksheetVision.snap(free, ink: ink, width: 600, height: 300, unit: 2), free)
+        // Textzeile ist keine Linie
+        XCTAssertFalse(WorksheetVision.isLine(ink, width: 600, height: 300, y: 231, x0: 60, x1: 500, unit: 2))
+        XCTAssertTrue(WorksheetVision.isLine(ink, width: 600, height: 300, y: 101, x0: 60, x1: 500, unit: 2))
+    }
+
+    func testJSONObjectsSurviveNoiseAndTruncation() {
+        let raw = """
+        Klar! ```json
+        {"felder":[{"text":"a {b}","x":1,"y":2,"w":30,"h":10},{"text":"zwei","x":"5","y":6,"w":40,"h":12},{"text":"abgeschn
+        """
+        let fields = WorksheetField.pixelFields(raw)
+        XCTAssertEqual(fields.map(\.text), ["a {b}", "zwei"])
+        XCTAssertEqual(fields[1].rect.minX, 5)
+    }
+}
