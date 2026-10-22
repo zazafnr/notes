@@ -189,7 +189,7 @@ extension EditorModel {
         writingQueue.removeFirst()
         let total = writing?.pages ?? 1
         writing = WritingStatus(pages: total, page: min(total, total - Set(writingQueue.map(\.pageID)).count))
-        let animator = HandwritingAnimator(strokes: part.strokes, color: ink.penColor,
+        let animator = HandwritingAnimator(strokes: part.strokes, color: HandwritingInk.color,
                                            size: HandwritingInk.pointSize(penWidth: ink.penWidth, xHeight: part.xHeight),
                                            xHeight: part.xHeight, speed: HandwritingStore.shared.speed.factor ?? 4)
         animator.onFinish = { [weak self] in
@@ -223,7 +223,7 @@ extension EditorModel {
     var writingProgress: Double { animator?.progress ?? 1 }
 
     private func writeDirectly(_ part: WritingPart) {
-        let strokes = HandwritingInk.pkStrokes(part.strokes, color: ink.penColor,
+        let strokes = HandwritingInk.pkStrokes(part.strokes, color: HandwritingInk.color,
                                                size: HandwritingInk.pointSize(penWidth: ink.penWidth, xHeight: part.xHeight),
                                                xHeight: part.xHeight)
         if let host, host.page.id == part.pageID {

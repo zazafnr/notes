@@ -6,6 +6,9 @@ enum HandwritingInk {
     /// Schreibtempo eines Stifts in Seitenpunkten pro Sekunde bei x-Höhe 12,5 (≈ 4 cm/s).
     static let baseSpeed: Double = 190
 
+    /// Die KI schreibt immer in Schwarz (wie ein normaler Stift), unabhängig von der gewählten Stiftfarbe.
+    static let color = InkSettings.penColors[0]
+
     /// Strichstärke passend zum eingestellten Stift und zur Schriftgröße.
     static func pointSize(penWidth: CGFloat, xHeight: Double) -> CGFloat {
         let base = max(1.6, penWidth * 0.62)

@@ -11,6 +11,8 @@ struct WorksheetFillSheet: View {
     var fromBook = false
     /// Wo die eingekreiste Aufgabe liegt (Anteile 0…1): Nur dort wird eingetragen.
     var taskArea: CGRect? = nil
+    /// Vergrößerter Ausschnitt der eingekreisten Aufgabe (besser lesbar für die KI).
+    var taskImage: UIImage? = nil
     /// Keine passenden Stellen gefunden: Lösung stattdessen als Heft-Eintrag schreiben.
     var onFallback: ((String) -> Void)? = nil
     @EnvironmentObject private var settings: AISettings
@@ -186,10 +188,12 @@ struct WorksheetFillSheet: View {
             let ocr = await Task.detached(priority: .userInitiated) { WorksheetOCR.lines(in: cg, size: pixelSize) }.value
             guard !Task.isCancelled else { return }
             do {
-                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: ocr, solutions: solutions, taskRect: taskRect)
+                let detail = taskImage?.jpegBase64(maxSide: 1400)
+                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: ocr, solutions: solutions, taskRect: taskRect,
+                                                            hasDetailImage: detail != nil)
                 guard let base64 = image.jpegBase64(maxSide: 1600) else { throw AIError.empty }
                 let raw = try await AIRequest.text(system: HandwritingPrompts.worksheetSystem, user: user,
-                                                   images: [base64], settings: settings, effort: "medium")
+                                                   images: [base64] + (detail.map { [$0] } ?? []), settings: settings, effort: "medium")
                 guard !Task.isCancelled else { return }
                 let parsed = WorksheetField.parse(raw, imageScale: scale, pageSize: pageSize)
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { fields = parsed }

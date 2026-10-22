@@ -7,12 +7,24 @@ struct WriteRequest: Identifiable {
     var answer: String
     var question: String?
     var images: [UIImage] = []
+    /// Die Aufgabe stammt von einem Zettel/einer Buchseite: Antwort kann direkt dort eingetragen werden.
+    var canFillWorksheet = false
+    /// Zettel-Eintrag als Vorauswahl (Seite ist ein Arbeitsblatt bzw. Bild).
+    var prefersWorksheet = false
+    var worksheetSource: WorksheetSource?
+}
+
+/// Ziel im Schreib-Fenster.
+enum WriteTarget: Hashable {
+    case below, newPage, worksheet
 }
 
 /// Vorschau und Bestätigung: Die KI formt die Antwort wie einen Heft-Eintrag, dann wird geschrieben.
 struct HandwritingWriteSheet: View {
     @ObservedObject var model: EditorModel
     let request: WriteRequest
+    /// Stattdessen auf dem Zettel an der richtigen Stelle eintragen.
+    var onWorksheet: (() -> Void)? = nil
     @EnvironmentObject private var settings: AISettings
     @ObservedObject private var hw = HandwritingStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -20,7 +32,7 @@ struct HandwritingWriteSheet: View {
     @State private var text = ""
     @State private var formatting = false
     @State private var error: String?
-    @State private var placement: WritePlacement = .below
+    @State private var target: WriteTarget = .below
     @State private var header = false
     @State private var useAI = true
     @State private var formatTask: Task<Void, Never>?
@@ -33,10 +45,14 @@ struct HandwritingWriteSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    previewCard
-                    if hasAnswer { aiOptions }
-                    editor
                     placementOptions
+                    if target == .worksheet {
+                        worksheetInfo
+                    } else {
+                        previewCard
+                        if hasAnswer { aiOptions }
+                        editor
+                    }
                     speedOptions
                 }
                 .padding(20)
@@ -54,21 +70,29 @@ struct HandwritingWriteSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
                         let content = text
-                        let where_ = placement
+                        let chosen = target
+                        formatTask?.cancel()
                         dismiss()
+                        if chosen == .worksheet {
+                            onWorksheet?()
+                            return
+                        }
                         // Erst nach dem Schließen schreiben, damit man zusieht
                         Task { @MainActor in
                             try? await Task.sleep(nanoseconds: 450_000_000)
-                            model.writeHandwriting(content, placement: where_)
+                            model.writeHandwriting(content, placement: chosen == .newPage ? .newPage : .below)
                         }
                     } label: {
                         Label("Schreiben", systemImage: "pencil.and.scribble").font(.headline)
                     }
-                    .disabled(text.trimmed.isEmpty || formatting)
+                    .disabled(target != .worksheet && (text.trimmed.isEmpty || formatting))
                 }
             }
         }
         .onAppear(perform: setup)
+        .onChange(of: target) { _, newTarget in
+            if newTarget != .worksheet, hasAnswer, text.isEmpty, !formatting { format() }
+        }
         .onDisappear { formatTask?.cancel() }
     }
 
@@ -145,17 +169,39 @@ struct HandwritingWriteSheet: View {
     private var placementOptions: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Wohin").font(.headline)
-            Picker("Wohin", selection: $placement) {
-                ForEach(WritePlacement.allCases) { p in Text(p.title).tag(p) }
+            Picker("Wohin", selection: $target) {
+                if request.canFillWorksheet {
+                    Text("Auf dem Zettel").tag(WriteTarget.worksheet)
+                }
+                if model.canWriteBelow {
+                    Text("Unter das Geschriebene").tag(WriteTarget.below)
+                }
+                Text("Neue Seite").tag(WriteTarget.newPage)
             }
             .pickerStyle(.segmented)
-            .disabled(!model.canWriteBelow)
-            if !model.canWriteBelow {
-                Text("Auf dieser Seite ist kein Platz mehr – es geht auf einer neuen Seite weiter.")
+            if !model.canWriteBelow, target == .newPage {
+                Text("Auf dieser Seite ist kein freier Platz unter dem Inhalt – es geht auf einer neuen Seite weiter.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var worksheetInfo: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "doc.text.viewfinder")
+                .font(.title2)
+                .foregroundStyle(Theme.aiGradient)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Direkt auf dem Zettel eintragen").font(.headline)
+                Text("Die Antwort wird genau an die Stelle der eingekreisten Aufgabe geschrieben – in die Lücken, Linien oder Tabellenfelder, auch über einem Bild. Du siehst die Stellen vorher und kannst alles ändern.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var speedOptions: some View {
@@ -171,10 +217,15 @@ struct HandwritingWriteSheet: View {
     // MARK: Ablauf
 
     private func setup() {
-        placement = model.canWriteBelow ? .below : .newPage
-        header = placement == .newPage || model.currentPageIsEmpty
+        if request.canFillWorksheet, request.prefersWorksheet {
+            target = .worksheet
+        } else {
+            target = model.canWriteBelow ? .below : .newPage
+        }
+        header = target != .below || model.currentPageIsEmpty
         if hasAnswer {
-            format()
+            // Für den Zettel formatiert die KI selbst passend zu den Lücken
+            if target != .worksheet { format() }
         } else {
             useAI = false
             editing = true
@@ -218,7 +269,7 @@ struct HandwritingWriteSheet: View {
         let (layout, xh) = model.previewLayout(sample, paper: paper, size: page.size)
         let bottom = layout.bounds.isNull ? 300 : layout.bounds.maxY + 40
         let size = CGSize(width: page.size.width, height: min(page.size.height, max(260, bottom)))
-        preview = HandwritingInk.previewImage(layout, paper: paper, size: size, color: model.ink.penColor,
+        preview = HandwritingInk.previewImage(layout, paper: paper, size: size, color: HandwritingInk.color,
                                               penWidth: model.ink.penWidth, xHeight: xh, scale: 1.2)
     }
 }

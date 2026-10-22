@@ -5,6 +5,8 @@ struct AskSheet: View {
     let snapshot: LassoSnapshot
     var isLatin = false
     var onSend: (_ display: String, _ prompt: String) -> Void
+    /// Lösen und die Antwort direkt an der eingekreisten Stelle eintragen.
+    var onFill: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var question = ""
@@ -29,6 +31,35 @@ struct AskSheet: View {
                         .shadow(color: Theme.aiColors[1].opacity(0.35), radius: 18, y: 6)
                         .scaleEffect(appeared ? 1 : 0.9)
                         .opacity(appeared ? 1 : 0)
+
+                    if let onFill {
+                        Button {
+                            Haptics.tap()
+                            dismiss()
+                            onFill()
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "pencil.and.scribble")
+                                    .font(.title3.weight(.semibold))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(snapshot.sourcePage != nil ? "Direkt ausfüllen (Buchseite ins Heft)" : "Direkt ausfüllen")
+                                        .font(.headline)
+                                    Text("Lösen und in deiner Handschrift genau hier eintragen")
+                                        .font(.caption)
+                                        .opacity(0.85)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").font(.subheadline.weight(.bold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(Theme.aiGradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+                        .buttonStyle(PressableStyle())
+                        .offset(y: appeared ? 0 : 16)
+                        .opacity(appeared ? 1 : 0)
+                    }
 
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
                         ForEach(Array(QuickAction.available(latin: isLatin).enumerated()), id: \.element.id) { index, action in

@@ -300,6 +300,7 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
             didInitialLayout = true
         }
         imageOverlay.layoutHandles()
+        startCurlIfReady()
     }
 
     private var lastWidthFit: CGFloat = 0
@@ -355,6 +356,32 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         writingLayer.center = paper.center
         if writingLayer.superview === canvas, canvas.subviews.last !== writingLayer {
             canvas.bringSubviewToFront(writingLayer)
+        }
+    }
+
+    // MARK: Blättern
+
+    private var pendingCurl: (view: UIView, forward: Bool)?
+
+    /// Die alte Seite liegt kurz obenauf und rollt sich dann weg (vorwärts) bzw. die neue rollt sich darüber (zurück).
+    func playCurl(_ snapshot: UIView, forward: Bool) {
+        pendingCurl = (snapshot, forward)
+        setNeedsLayout()
+    }
+
+    private func startCurlIfReady() {
+        guard let curl = pendingCurl, bounds.width > 100 else { return }
+        pendingCurl = nil
+        let snap = curl.view
+        snap.frame = bounds
+        snap.isUserInteractionEnabled = false
+        addSubview(snap)
+        // Erst nach dem ersten Bild der neuen Seite starten, sonst blitzt sie kurz auf
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            UIView.transition(with: self, duration: 0.55,
+                              options: [curl.forward ? .transitionCurlUp : .transitionCurlDown, .allowUserInteraction],
+                              animations: { snap.removeFromSuperview() })
         }
     }
 
@@ -1030,6 +1057,7 @@ struct PageCanvas: UIViewRepresentable {
         host.onImageTap = { [weak model] in model?.startImageEditing() }
         host.onEmptyTap = { [weak model] in model?.stopImageEditing() }
         model.host = host
+        if let curl = model.takePendingCurl() { host.playCurl(curl.view, forward: curl.forward) }
         return host
     }
 

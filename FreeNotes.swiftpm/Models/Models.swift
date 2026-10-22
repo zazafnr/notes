@@ -156,8 +156,10 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var images: [String] = []
     /// Ganze Buchseite zur Frage (Bilddatei), falls im Buch eingekreist wurde.
     var sourcePage: String? = nil
-    /// Wo die eingekreiste Aufgabe auf dieser Buchseite liegt (Anteile 0…1).
+    /// Wo die eingekreiste Aufgabe auf der Seite liegt (Anteile 0…1).
     var sourceArea: CGRect? = nil
+    /// Heftseite, auf der die Aufgabe eingekreist wurde.
+    var sourcePageID: UUID? = nil
     var isError = false
     var meta: String? = nil
     var date = Date()

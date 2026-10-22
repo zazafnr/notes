@@ -9,8 +9,10 @@ struct LassoSnapshot: Identifiable {
     let rect: CGRect
     /// Ganze Buchseite, wenn im Buch eingekreist wurde (zum Ausfüllen im Heft).
     var sourcePage: UIImage? = nil
-    /// Wo die eingekreiste Aufgabe auf der Buchseite liegt (Anteile 0…1).
+    /// Wo die eingekreiste Aufgabe auf der Seite liegt (Anteile 0…1).
     var sourceArea: CGRect? = nil
+    /// Heftseite, auf der eingekreist wurde.
+    var pageID: UUID? = nil
 }
 
 @MainActor
@@ -48,6 +50,8 @@ final class EditorModel: ObservableObject {
     var navigatingForWriting = false
 
     private var lastLassoRect: CGRect?
+    /// Bild der alten Seite, das sich beim Blättern wegrollt.
+    private var pendingCurl: (view: UIView, forward: Bool)?
     private var pending: (page: UUID, drawing: PKDrawing)?
     private var saveTask: Task<Void, Never>?
     private var isClosed = false
@@ -132,6 +136,21 @@ final class EditorModel: ObservableObject {
 
     // MARK: Seiten
 
+    /// Merkt sich ein Bild der aktuellen Seite; die neue Seite rollt es dann wie Papier weg.
+    private func prepareCurl(forward: Bool) {
+        guard let host, host.bounds.width > 100, let snap = host.snapshotView(afterScreenUpdates: false) else {
+            pendingCurl = nil
+            return
+        }
+        pendingCurl = (snap, forward)
+    }
+
+    /// Wird von der neuen Seite abgeholt (einmalig).
+    func takePendingCurl() -> (view: UIView, forward: Bool)? {
+        defer { pendingCurl = nil }
+        return pendingCurl
+    }
+
     func goTo(_ index: Int) {
         guard let nb = notebook, nb.pages.indices.contains(index), index != pageIndex else { return }
         // Selbst geblättert, während geschrieben wird: den Rest sofort fertig schreiben
@@ -140,7 +159,8 @@ final class EditorModel: ObservableObject {
         aiMode = false
         imageEditMode = false
         geometryTool = nil
-        withAnimation(.easeInOut(duration: 0.25)) { pageIndex = index }
+        prepareCurl(forward: index > pageIndex)
+        pageIndex = index
         Haptics.tap()
     }
 
@@ -217,7 +237,8 @@ final class EditorModel: ObservableObject {
             newIndex = min(pageIndex + 1, nb.pages.count)
             nb.pages.insert(Page(paper: paper), at: newIndex)
         }
-        withAnimation(.easeInOut(duration: 0.25)) { pageIndex = newIndex }
+        prepareCurl(forward: true)
+        pageIndex = newIndex
         Haptics.success()
     }
 
@@ -252,7 +273,8 @@ final class EditorModel: ObservableObject {
             }
             nb.pages.insert(contentsOf: pages, at: firstNew)
         }
-        withAnimation(.easeInOut(duration: 0.25)) { pageIndex = firstNew }
+        if firstNew != pageIndex { prepareCurl(forward: true) }
+        pageIndex = firstNew
         Haptics.success()
     }
 
@@ -426,7 +448,9 @@ final class EditorModel: ObservableObject {
                                         rect: rect, scale: scale)
         lastLassoRect = rect
         Haptics.success()
-        snapshot = LassoSnapshot(image: image, rect: rect)
+        let area = CGRect(x: rect.minX / CGFloat(page.width), y: rect.minY / CGFloat(page.height),
+                          width: rect.width / CGFloat(page.width), height: rect.height / CGFloat(page.height))
+        snapshot = LassoSnapshot(image: image, rect: rect, sourceArea: area, pageID: pageID)
     }
 
     func currentPageImage(scale: CGFloat = 1.4) -> UIImage? {

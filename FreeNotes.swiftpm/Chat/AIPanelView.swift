@@ -93,6 +93,7 @@ struct AIPanelView: View {
                                    isStreaming: chat.isStreaming,
                                    onInsert: insertAction(for: message),
                                    fromBook: question(before: message.id)?.sourcePage != nil,
+                                   fromPage: question(before: message.id)?.sourcePageID != nil,
                                    onRegenerate: { chat.regenerate() })
                             .id(message.id)
                             .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
@@ -246,6 +247,8 @@ struct MessageRow: View {
     var onInsert: ((InsertMode) -> Void)?
     /// Die Frage kam aus dem Buch (ganze Buchseite vorhanden).
     var fromBook = false
+    /// Die Frage wurde auf einer Heftseite eingekreist.
+    var fromPage = false
     var onRegenerate: () -> Void
 
     @State private var copied = false
@@ -324,7 +327,8 @@ struct MessageRow: View {
                         Label("In meiner Handschrift ins Heft", systemImage: "pencil.and.scribble")
                     }
                     Button { onInsert(.worksheet) } label: {
-                        Label(fromBook ? "Buchseite ins Heft & ausfüllen" : "Auf dem Zettel eintragen", systemImage: "doc.text.viewfinder")
+                        Label(fromBook ? "Buchseite ins Heft & ausfüllen" : (fromPage ? "Auf dem Zettel an der Stelle eintragen" : "Auf dem Zettel eintragen"),
+                              systemImage: "doc.text.viewfinder")
                     }
                     Button { onInsert(.card) } label: {
                         Label("Als Karte einfügen", systemImage: "square.and.arrow.down.on.square")

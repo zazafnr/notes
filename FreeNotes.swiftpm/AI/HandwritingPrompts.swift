@@ -98,7 +98,8 @@ enum HandwritingPrompts {
     - Bereits ausgefüllte Stellen auslassen.
     """
 
-    static func worksheetUser(imageSize: CGSize, ocr: [OCRLine], solutions: String?, taskRect: CGRect? = nil) -> String {
+    static func worksheetUser(imageSize: CGSize, ocr: [OCRLine], solutions: String?, taskRect: CGRect? = nil,
+                              hasDetailImage: Bool = false) -> String {
         var text = "Bildgröße: \(Int(imageSize.width)) × \(Int(imageSize.height)) Pixel.\n\nErkannte Textzeilen (x, y, w, h in Pixeln):\n"
         for line in ocr.prefix(160) {
             let r = line.rect
@@ -118,6 +119,9 @@ enum HandwritingPrompts {
         if let r = taskRect {
             text += "\nDie Aufgabe, um die es geht, wurde eingekreist: Bereich [\(Int(r.minX)), \(Int(r.minY)), \(Int(r.width)), \(Int(r.height))] (x, y, w, h). "
             text += "Felder nur für diese Aufgabe, in oder direkt an diesem Bereich – nichts auf dem Rest der Seite.\n"
+        }
+        if hasDetailImage {
+            text += "\nDas zweite Bild ist ein vergrößerter Ausschnitt der eingekreisten Aufgabe (nur zum besseren Lesen; Koordinaten immer im ersten Bild).\n"
         }
         text += "\nGib jetzt das JSON mit allen Feldern."
         return text

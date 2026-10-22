@@ -41,7 +41,6 @@ struct NotebookEditorView: View {
                            flipDirection: settings.flipDirection, pencilAction: settings.pencilAction)
                     .id(page.id)
                     .ignoresSafeArea(edges: .bottom)
-                    .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.98)), removal: .opacity))
             }
 
             VStack(spacing: 10) {
@@ -124,12 +123,18 @@ struct NotebookEditorView: View {
         }
         .sheet(item: $model.snapshot) { snap in
             AskSheet(snapshot: snap,
-                     isLatin: QuickAction.isLatin([model.notebook?.title, store.subject(model.notebook?.subjectID)?.name])) { display, prompt in
-                chat.send(display: display, prompt: prompt, images: [snap.image], sourcePage: snap.sourcePage,
-                          sourceArea: snap.sourceArea)
-                model.aiMode = false
-                model.showPanel = true
-            }
+                     isLatin: QuickAction.isLatin([model.notebook?.title, store.subject(model.notebook?.subjectID)?.name]),
+                     onSend: { display, prompt in
+                         chat.send(display: display, prompt: prompt, images: [snap.image], sourcePage: snap.sourcePage,
+                                   sourceArea: snap.sourceArea, sourcePageID: snap.pageID)
+                         model.aiMode = false
+                         model.showPanel = true
+                     },
+                     onFill: {
+                         model.aiMode = false
+                         openWorksheet(solutions: nil, bookPage: snap.sourcePage, pageID: snap.pageID,
+                                       area: snap.sourceArea, taskImage: snap.image)
+                     })
         }
         .photosPicker(isPresented: $showPhotos, selection: $photoItem, matching: .images)
         .onChange(of: photoItem) { _, item in
@@ -167,11 +172,16 @@ struct NotebookEditorView: View {
             }
         }
         .sheet(item: $writeRequest) { request in
-            HandwritingWriteSheet(model: model, request: request)
+            HandwritingWriteSheet(model: model, request: request) {
+                if let source = request.worksheetSource {
+                    openWorksheet(solutions: request.answer, bookPage: source.bookPage, pageID: source.pageID,
+                                  area: source.area, taskImage: source.taskImage)
+                }
+            }
         }
         .sheet(item: $worksheet) { request in
             WorksheetFillSheet(model: model, solutions: request.solutions, fromBook: request.fromBook,
-                               taskArea: request.taskArea) { text in
+                               taskArea: request.taskArea, taskImage: request.taskImage) { text in
                 // Keine Lücken auf der Seite: Lösung stattdessen wie im Heft auf eine neue Seite schreiben
                 writeRequest = WriteRequest(answer: text)
             }
@@ -199,17 +209,52 @@ struct NotebookEditorView: View {
         switch mode {
         case .handwriting:
             let images = question?.images.compactMap { store.chatImage($0) } ?? []
-            writeRequest = WriteRequest(answer: answer.text, question: question.map { $0.prompt ?? $0.text }, images: images)
+            var request = WriteRequest(answer: answer.text, question: question.map { $0.prompt ?? $0.text }, images: images)
+            let source = worksheetSource(for: question)
+            request.worksheetSource = source
+            request.canFillWorksheet = source != nil
+            request.prefersWorksheet = source.map { $0.bookPage != nil || pageLooksLikeWorksheet($0.pageID) } ?? false
+            writeRequest = request
         case .worksheet:
-            if let name = question?.sourcePage, let page = store.chatImage(name) {
-                // Aufgabe kam aus dem Buch: ganze Buchseite als neue Heftseite einfügen und dort ausfüllen
-                model.addBackgroundPages([page])
-                worksheet = WorksheetRequest(solutions: answer.text, fromBook: true, taskArea: question?.sourceArea)
-            } else {
-                worksheet = WorksheetRequest(solutions: answer.text)
-            }
+            let source = worksheetSource(for: question)
+            openWorksheet(solutions: answer.text, bookPage: source?.bookPage, pageID: source?.pageID,
+                          area: source?.area, taskImage: source?.taskImage)
         case .card:
             model.insertAnswer(answer.text)
+        }
+    }
+
+    /// Woher die Aufgabe stammt (Buchseite oder eingekreist auf einer Heftseite).
+    private func worksheetSource(for question: ChatMessage?) -> WorksheetSource? {
+        guard let question else { return nil }
+        let crop = question.images.first.flatMap { store.chatImage($0) }
+        if let name = question.sourcePage, let page = store.chatImage(name) {
+            return WorksheetSource(bookPage: page, pageID: nil, area: question.sourceArea, taskImage: crop)
+        }
+        if let id = question.sourcePageID, model.notebook?.pages.contains(where: { $0.id == id }) == true {
+            return WorksheetSource(bookPage: nil, pageID: id, area: question.sourceArea, taskImage: crop)
+        }
+        return nil
+    }
+
+    /// Seite mit Scan oder Bild: Antworten gehören dort hinein, nicht darunter.
+    private func pageLooksLikeWorksheet(_ id: UUID?) -> Bool {
+        guard let id, let page = model.notebook?.pages.first(where: { $0.id == id }) else { return false }
+        return page.background != nil || !page.items.isEmpty
+    }
+
+    /// Zettel ausfüllen: Buchseite einfügen bzw. zur Seite mit der Aufgabe blättern, dann die Felder suchen.
+    private func openWorksheet(solutions: String?, bookPage: UIImage?, pageID: UUID?, area: CGRect?, taskImage: UIImage?) {
+        if let bookPage {
+            model.addBackgroundPages([bookPage])
+        } else if let pageID, let index = model.notebook?.pages.firstIndex(where: { $0.id == pageID }) {
+            model.goTo(index)
+        }
+        let request = WorksheetRequest(solutions: solutions, fromBook: bookPage != nil, taskArea: area, taskImage: taskImage)
+        // Kurz warten, bis das vorige Fenster zu ist (zwei Fenster gleichzeitig gehen nicht)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 550_000_000)
+            worksheet = request
         }
     }
 
@@ -458,6 +503,15 @@ struct WorksheetRequest: Identifiable {
     var fromBook = false
     /// Eingekreiste Aufgabe auf der Seite (Anteile 0…1).
     var taskArea: CGRect? = nil
+    var taskImage: UIImage? = nil
+}
+
+/// Herkunft einer Aufgabe, um die Antwort an der richtigen Stelle einzutragen.
+struct WorksheetSource {
+    var bookPage: UIImage?
+    var pageID: UUID?
+    var area: CGRect?
+    var taskImage: UIImage?
 }
 
 struct ShareItem: Identifiable {
