@@ -29,6 +29,8 @@ struct WorksheetFillSheet: View {
     @State private var watchdog: Task<Void, Never>?
     @State private var timedOut = false
     @State private var attempt = 0
+    /// Welcher KI-Anbieter gerade gefragt wird (oder warum gewechselt wurde).
+    @State private var providerStatus = ""
 
     /// Länger wartet niemand: danach abbrechen und »Nochmal« anbieten.
     private let timeout: UInt64 = 80
@@ -134,6 +136,13 @@ struct WorksheetFillSheet: View {
         VStack(spacing: 10) {
             ProgressView()
             Text(stageText).font(.subheadline.weight(.medium))
+            if !providerStatus.isEmpty {
+                Text(providerStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
+            }
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text("\(Int(context.date.timeIntervalSince(startedAt))) s")
                     .font(.caption.monospacedDigit())
@@ -223,6 +232,7 @@ struct WorksheetFillSheet: View {
         cancelRunning()
         attempt += 1
         error = nil
+        providerStatus = ""
         timedOut = false
         fields = []
         stage = .reading
@@ -243,8 +253,8 @@ struct WorksheetFillSheet: View {
                                  width: $0.width * pageSize.width, height: $0.height * pageSize.height))
         }
         let solutions = solutions
-        // Beim Wiederholen schneller (weniger Nachdenken), Zuordnen fertiger Lösungen ist immer schnell
-        let effort = solutions != nil || retry ? "low" : "medium"
+        // Gleicher Modus wie im Chat mit Bild (dort funktioniert es zuverlässig); beim Wiederholen schneller
+        let effort = retry ? "low" : "medium"
         let unit = Double(crop.scale)
 
         // Raster und Graustufen gehen in Millisekunden – direkt hier, ohne Hintergrund-Umweg.
@@ -263,9 +273,9 @@ struct WorksheetFillSheet: View {
             do {
                 let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: [], solutions: solutions, taskRect: taskRect)
                 let raw = try await AIRequest.text(system: HandwritingPrompts.worksheetSystem, user: user, images: [base64],
-                                                   settings: settings, effort: effort) { _ in
-                    if stage == .thinking { stage = .answering }
-                }
+                                                   settings: settings, effort: effort,
+                                                   onText: { _ in if stage == .thinking { stage = .answering } },
+                                                   onStatus: { providerStatus = $0 })
                 guard !Task.isCancelled else { return }
                 let page = CGRect(origin: .zero, size: pageSize)
                 let parsed: [WorksheetField] = WorksheetField.pixelFields(raw).compactMap { item in
@@ -297,6 +307,7 @@ struct WorksheetFillSheet: View {
             running.cancel()
             // Sofort Bescheid geben, auch wenn ein Schritt noch hängt
             error = "Das hat zu lange gedauert (über \(timeout) s). Versuch es nochmal – dann geht es schneller."
+                + (providerStatus.isEmpty ? "" : "\nZuletzt: \(providerStatus)")
             stage = .done
         }
     }

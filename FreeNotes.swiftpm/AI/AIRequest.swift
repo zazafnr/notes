@@ -6,12 +6,15 @@ import Foundation
 enum AIRequest {
     /// `onText`: meldet, wie viele Zeichen schon angekommen sind (für eine Fortschrittsanzeige).
     static func text(system: String, user: String, images: [String] = [], settings: AISettings,
-                     effort: String = "low", onText: ((Int) -> Void)? = nil) async throws -> String {
+                     effort: String = "low", onText: ((Int) -> Void)? = nil,
+                     onStatus: ((String) -> Void)? = nil) async throws -> String {
         let messages = [AIMessage(role: "system", text: system), AIMessage(role: "user", text: user, images: images)]
         var lastError: Error = AIError.empty
-        for provider in settings.providerOrder {
+        let providers = settings.providerOrder
+        for (index, provider) in providers.enumerated() {
             do {
                 let config = try settings.config(for: provider)
+                onStatus?("Frage \(provider.title) (\(config.model)) …")
                 var text = ""
                 for try await chunk in AIClient.stream(messages: messages, config: config, effort: effort) {
                     switch chunk {
@@ -30,6 +33,10 @@ enum AIRequest {
             } catch {
                 if Task.isCancelled { throw CancellationError() }
                 lastError = error
+                if index + 1 < providers.count {
+                    let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    onStatus?("\(provider.title): \(reason) – versuche \(providers[index + 1].title) …")
+                }
             }
         }
         throw lastError
