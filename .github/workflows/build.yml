@@ -17,13 +17,18 @@ jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        xcode: ["16", "26"]
+    name: build (Xcode ${{ matrix.xcode }})
     steps:
       - uses: actions/checkout@v4
 
-      - name: Xcode 16 wählen (wie Swift Playgrounds)
+      - name: Xcode ${{ matrix.xcode }} wählen
         run: |
           ls -d /Applications/Xcode*.app
-          XC=$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)
+          XC=$(ls -d /Applications/Xcode_${{ matrix.xcode }}*.app | sort -V | tail -1)
           sudo xcode-select -s "$XC"
           xcodebuild -version
 
