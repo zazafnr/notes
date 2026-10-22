@@ -26,11 +26,18 @@ struct SettingsView: View {
                     ProviderSection(provider: provider)
                 }
 
-                Section("Apple Pencil") {
+                Section {
                     Toggle("Auch mit dem Finger zeichnen", isOn: $settings.fingerDrawing)
-                    Label("Doppeltippen oder Drücken (Pencil Pro) schaltet das KI-Kreis-Werkzeug ein und aus.", systemImage: "applepencil.tip")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    Picker("Doppeltippen / Drücken", selection: $settings.pencilAction) {
+                        ForEach(PencilAction.allCases) { Text($0.title).tag($0) }
+                    }
+                    Picker("Blättern", selection: $settings.flipDirection) {
+                        ForEach(FlipDirection.allCases) { Text($0.title).tag($0) }
+                    }
+                } header: {
+                    Text("Apple Pencil & Seiten")
+                } footer: {
+                    Text("Doppeltippen (Pencil 2) oder Drücken (Pencil Pro) löst die gewählte Aktion aus. Blättern: mit einem Finger seitlich wischen oder über das Seitenende hinaus ziehen.")
                 }
 
                 Section {

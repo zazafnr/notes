@@ -6,6 +6,7 @@ on:
   push:
     paths:
       - "FreeNotes.swiftpm/**"
+      - "LogicTests/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
@@ -52,3 +53,24 @@ jobs:
         if: failure()
         working-directory: FreeNotes.swiftpm
         run: grep -E "error:" build.log | sort -u | head -80 || true
+
+  logic-tests:
+    name: Logik-Tests
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tests ausführen
+        working-directory: LogicTests
+        run: swift test
+
+      - name: Formel-Bibliotheken erreichbar (KaTeX, marked)
+        run: |
+          for url in \
+            https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js \
+            https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css \
+            https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js \
+            https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js; do
+            curl -fsSI "$url" > /dev/null && echo "OK $url"
+          done

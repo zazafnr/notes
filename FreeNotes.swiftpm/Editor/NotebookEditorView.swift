@@ -33,7 +33,8 @@ struct NotebookEditorView: View {
             Color(uiColor: .secondarySystemBackground).ignoresSafeArea()
 
             if let page = model.currentPage {
-                PageCanvas(model: model, store: store, page: page, fingerDrawing: settings.fingerDrawing)
+                PageCanvas(model: model, store: store, page: page, fingerDrawing: settings.fingerDrawing,
+                           flipDirection: settings.flipDirection, pencilAction: settings.pencilAction)
                     .id(page.id)
                     .ignoresSafeArea(edges: .bottom)
                     .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.98)), removal: .opacity))
@@ -43,6 +44,9 @@ struct NotebookEditorView: View {
                 topBar
                 if model.aiMode {
                     aiHint.transition(.move(edge: .top).combined(with: .opacity))
+                }
+                if model.imageEditMode {
+                    imageHint.transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
             .padding(.horizontal, 14)
@@ -64,6 +68,19 @@ struct NotebookEditorView: View {
         }
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: model.showPanel)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.aiMode)
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.imageEditMode)
+        .onDrop(of: [.image], isTargeted: nil) { providers in
+            let model = model
+            var accepted = false
+            for provider in providers where provider.canLoadObject(ofClass: UIImage.self) {
+                accepted = true
+                _ = provider.loadObject(ofClass: UIImage.self) { object, _ in
+                    guard let image = object as? UIImage else { return }
+                    Task { @MainActor in model.addImage(image) }
+                }
+            }
+            return accepted
+        }
         .sheet(item: $model.snapshot) { snap in
             AskSheet(snapshot: snap) { display, prompt in
                 chat.send(display: display, prompt: prompt, images: [snap.image])
@@ -175,8 +192,9 @@ struct NotebookEditorView: View {
                         Label("Seite löschen", systemImage: "trash")
                     }
                     .disabled((model.notebook?.pages.count ?? 0) < 2)
-                    Button { model.removeLastImage() } label: {
-                        Label("Letztes Bild entfernen", systemImage: "photo.badge.minus")
+                    Button { model.toggleImageEditMode() } label: {
+                        Label(model.imageEditMode ? "Bilder fertig bearbeitet" : "Bilder verschieben & skalieren",
+                              systemImage: "arrow.up.and.down.and.arrow.left.and.right")
                     }
                     .disabled(model.currentPage?.items.isEmpty ?? true)
                 } label: { ToolbarIcon(symbol: "ellipsis.circle") }
@@ -223,6 +241,21 @@ struct NotebookEditorView: View {
             } label: { Label("Seite scannen", systemImage: "doc.viewfinder") }
             Button { showImporter = true } label: { Label("PDF oder Datei importieren", systemImage: "doc.badge.plus") }
         } label: { ToolbarIcon(symbol: "photo.badge.plus") }
+    }
+
+    private var imageHint: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "hand.draw")
+            Text("Bilder ziehen, am Punkt unten rechts skalieren")
+                .font(.subheadline.weight(.medium))
+            Button("Fertig") { model.toggleImageEditMode() }
+                .font(.subheadline.weight(.semibold))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Theme.accent, in: Capsule())
+        .shadow(color: Theme.accent.opacity(0.4), radius: 12, y: 4)
     }
 
     private var aiHint: some View {
@@ -272,11 +305,35 @@ struct PageOverviewView: View {
                             }
                         }
                         .buttonStyle(PressableStyle())
+                        .contextMenu {
+                            Button { model.duplicatePage(at: index) } label: {
+                                Label("Duplizieren", systemImage: "plus.square.on.square")
+                            }
+                            Button { model.movePage(from: index, by: -1) } label: {
+                                Label("Nach vorne", systemImage: "arrow.left")
+                            }
+                            .disabled(index == 0)
+                            Button { model.movePage(from: index, by: 1) } label: {
+                                Label("Nach hinten", systemImage: "arrow.right")
+                            }
+                            .disabled(index >= (model.notebook?.pages.count ?? 1) - 1)
+                            Divider()
+                            Button(role: .destructive) { model.deletePage(at: index) } label: {
+                                Label("Löschen", systemImage: "trash")
+                            }
+                            .disabled((model.notebook?.pages.count ?? 0) < 2)
+                        }
                     }
                 }
                 .padding(20)
             }
             .navigationTitle("Seiten")
+            .safeAreaInset(edge: .bottom) {
+                Text("Lange drücken zum Duplizieren, Verschieben oder Löschen")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 8)
+            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } }

@@ -63,7 +63,7 @@ enum PromptBuilder {
         Regeln:
         - Antworte auf Deutsch, außer die Aufgabe verlangt eine andere Sprache.
         - Formatiere mit Markdown: kurze Überschriften (##), Listen, **fett** für Ergebnisse.
-        - Schreib Formeln OHNE LaTeX, nur mit normalen Zeichen und Unicode, z. B. x², √2, ½, 3 · 4, ≤, π, Brüche als (a)/(b).
+        - Schreib mathematische Formeln in LaTeX: im Text mit $…$, abgesetzte Formeln mit $$…$$. Einfache Zahlen und Rechnungen ohne Formeln schreibst du normal.
         - Wenn ein Bild mitgeschickt wird, ist das ein vom Schüler eingekreister Ausschnitt einer Buch- oder Heftseite. Lies ihn genau.
         - Sei so kurz wie möglich und so ausführlich wie nötig.
         """
@@ -71,24 +71,70 @@ enum PromptBuilder {
     }
 }
 
-/// Wandelt häufiges LaTeX in lesbaren Text um, falls das Modell es trotzdem benutzt.
+/// Wandelt häufiges LaTeX in lesbaren Text um (für die Live-Anzeige und ohne Internet).
 enum LatexLite {
+    private static let superscripts: [Character: Character] = [
+        "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+        "+": "⁺", "-": "⁻", "n": "ⁿ", "x": "ˣ", "(": "⁽", ")": "⁾",
+    ]
+    private static let subscripts: [Character: Character] = [
+        "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+        "+": "₊", "-": "₋", "n": "ₙ", "x": "ₓ",
+    ]
+
+    /// Enthält der Text Formeln, die KaTeX schöner darstellen kann?
+    static func containsMath(_ s: String) -> Bool {
+        s.contains("$") || s.contains("\\(") || s.contains("\\[") || s.contains("\\frac") || s.contains("\\sqrt")
+    }
+
     static func clean(_ input: String) -> String {
         var s = input
+        // Brüche und Wurzeln zuerst (mehrfach, für verschachtelte Ausdrücke)
+        for _ in 0..<3 {
+            s = s.replacingOccurrences(of: #"\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}"#, with: "($1)/($2)", options: .regularExpression)
+            s = s.replacingOccurrences(of: #"\\sqrt\{([^{}]*)\}"#, with: "√($1)", options: .regularExpression)
+            s = s.replacingOccurrences(of: #"\\(?:text|mathrm|mathbf|operatorname)\{([^{}]*)\}"#, with: "$1", options: .regularExpression)
+        }
         let replacements: [(String, String)] = [
+            ("\\Leftrightarrow", "⇔"), ("\\Rightarrow", "⇒"), ("\\rightarrow", "→"),
+            ("\\left", ""), ("\\right", ""),
             ("\\[", ""), ("\\]", ""), ("\\(", ""), ("\\)", ""), ("$$", ""),
-            ("\\cdot", "·"), ("\\times", "×"), ("\\div", "÷"), ("\\pm", "±"),
-            ("\\leq", "≤"), ("\\geq", "≥"), ("\\le ", "≤ "), ("\\ge ", "≥ "), ("\\neq", "≠"),
+            ("\\cdot", "·"), ("\\times", "×"), ("\\div", "÷"), ("\\pm", "±"), ("\\mp", "∓"),
+            ("\\leq", "≤"), ("\\geq", "≥"), ("\\le", "≤"), ("\\ge", "≥"), ("\\neq", "≠"),
             ("\\approx", "≈"), ("\\pi", "π"), ("\\alpha", "α"), ("\\beta", "β"),
-            ("\\gamma", "γ"), ("\\Delta", "Δ"), ("\\infty", "∞"), ("\\rightarrow", "→"),
-            ("\\Rightarrow", "⇒"), ("\\quad", "  "), ("\\,", " "), ("\\left", ""), ("\\right", ""),
-            ("^2", "²"), ("^3", "³"),
+            ("\\gamma", "γ"), ("\\Delta", "Δ"), ("\\delta", "δ"), ("\\infty", "∞"),
+            ("\\to", "→"), ("\\quad", "  "), ("\\degree", "°"),
+            ("\\,", " "), ("\\;", " "), ("\\!", ""),
         ]
         for (a, b) in replacements { s = s.replacingOccurrences(of: a, with: b) }
-        s = s.replacingOccurrences(of: #"\\frac\{([^{}]*)\}\{([^{}]*)\}"#, with: "($1)/($2)", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"\\sqrt\{([^{}]*)\}"#, with: "√($1)", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"\\text\{([^{}]*)\}"#, with: "$1", options: .regularExpression)
+        s = scripts(in: s, marker: "^", map: superscripts)
+        s = scripts(in: s, marker: "_", map: subscripts)
         s = s.replacingOccurrences(of: #"\$([^$\n]+)\$"#, with: "$1", options: .regularExpression)
         return s
+    }
+
+    /// Ersetzt x^2, x^{12}, a_1 usw. durch hoch- bzw. tiefgestellte Zeichen, wo es möglich ist.
+    private static func scripts(in s: String, marker: Character, map: [Character: Character]) -> String {
+        var out = ""
+        var chars = Array(s)[...]
+        while let c = chars.popFirst() {
+            guard c == marker, let next = chars.first else { out.append(c); continue }
+            let group: [Character]
+            let consumed: Int
+            if next == "{", let close = chars.firstIndex(of: "}") {
+                group = Array(chars[chars.index(after: chars.startIndex)..<close])
+                consumed = group.count + 2
+            } else {
+                group = [next]
+                consumed = 1
+            }
+            if !group.isEmpty, group.allSatisfy({ map[$0] != nil }) {
+                out.append(contentsOf: group.compactMap { map[$0] })
+                chars = chars.dropFirst(consumed)
+            } else {
+                out.append(c)
+            }
+        }
+        return out
     }
 }

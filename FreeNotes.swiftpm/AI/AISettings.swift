@@ -1,56 +1,17 @@
 import SwiftUI
 import Security
 
-enum AIProviderKind: String, CaseIterable, Identifiable, Codable, Sendable {
-    case gemini, openrouter
+enum PencilAction: String, CaseIterable, Identifiable {
+    case ai, eraser
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .gemini: return "Google Gemini"
-        case .openrouter: return "OpenRouter"
+        case .ai: return "KI-Kreis ein/aus"
+        case .eraser: return "Radierer ein/aus"
         }
     }
-
-    /// Beide Anbieter sprechen das OpenAI-kompatible Format.
-    var baseURL: URL {
-        switch self {
-        case .gemini: return URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!
-        case .openrouter: return URL(string: "https://openrouter.ai/api/v1/")!
-        }
-    }
-
-    var defaultModel: String {
-        switch self {
-        case .gemini: return "gemini-flash-latest"
-        case .openrouter: return "openrouter/free"
-        }
-    }
-
-    var keyHelpURL: URL {
-        switch self {
-        case .gemini: return URL(string: "https://aistudio.google.com/apikey")!
-        case .openrouter: return URL(string: "https://openrouter.ai/keys")!
-        }
-    }
-
-    var limitHint: String {
-        switch self {
-        case .gemini:
-            return "Kostenloser Key von Google AI Studio. Sehr gut bei Mathe und beim Lesen von Bildern. Es gibt Limits pro Minute und pro Tag."
-        case .openrouter:
-            return "Kostenlose Modelle (»:free« oder »openrouter/free«). Ca. 20 Anfragen pro Minute und 50 pro Tag (1000, wenn man einmal 10 $ Guthaben kauft)."
-        }
-    }
-
-    var other: AIProviderKind { self == .gemini ? .openrouter : .gemini }
-}
-
-struct AIConfig: Sendable {
-    let provider: AIProviderKind
-    let model: String
-    let key: String
 }
 
 @MainActor
@@ -64,6 +25,8 @@ final class AISettings: ObservableObject {
     @Published var grade: String { didSet { defaults.set(grade, forKey: "ai.grade") } }
     @Published var fingerDrawing: Bool { didSet { defaults.set(fingerDrawing, forKey: "pen.finger") } }
     @Published var hasOnboarded: Bool { didSet { defaults.set(hasOnboarded, forKey: "app.onboarded") } }
+    @Published var flipDirection: FlipDirection { didSet { defaults.set(flipDirection.rawValue, forKey: "pages.flip") } }
+    @Published var pencilAction: PencilAction { didSet { defaults.set(pencilAction.rawValue, forKey: "pen.action") } }
     @Published private(set) var keyVersion = 0
 
     static let grades = ["Klasse 5", "Klasse 6", "Klasse 7", "Klasse 8", "Klasse 9", "Klasse 10",
@@ -77,6 +40,8 @@ final class AISettings: ObservableObject {
         grade = defaults.string(forKey: "ai.grade") ?? "Klasse 10"
         fingerDrawing = defaults.bool(forKey: "pen.finger")
         hasOnboarded = defaults.bool(forKey: "app.onboarded")
+        flipDirection = FlipDirection(rawValue: defaults.string(forKey: "pages.flip") ?? "") ?? .horizontal
+        pencilAction = PencilAction(rawValue: defaults.string(forKey: "pen.action") ?? "") ?? .ai
     }
 
     func key(for p: AIProviderKind) -> String {

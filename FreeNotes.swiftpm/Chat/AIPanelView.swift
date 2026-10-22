@@ -267,8 +267,14 @@ struct MessageRow: View {
                     Button("Erneut versuchen", action: onRegenerate).font(.subheadline.weight(.semibold))
                 }
             } else {
-                MarkdownText(text: message.text)
-                    .textSelection(.enabled)
+                if isLast && isStreaming {
+                    MarkdownText(text: message.text)
+                } else if LatexLite.containsMath(message.text) {
+                    MathMarkdownView(text: message.text)
+                } else {
+                    MarkdownText(text: message.text)
+                        .textSelection(.enabled)
+                }
                 if !(isLast && isStreaming) {
                     actions
                 }

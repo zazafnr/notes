@@ -45,7 +45,21 @@ enum Theme {
 struct GlassBackground: ViewModifier {
     var cornerRadius: CGFloat
 
+    @ViewBuilder
     func body(content: Content) -> some View {
+        // Liquid Glass gibt es erst ab iOS 26 (Xcode 26 / neues Swift Playgrounds).
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        } else {
+            material(content)
+        }
+        #else
+        material(content)
+        #endif
+    }
+
+    private func material(_ content: Content) -> some View {
         content
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
@@ -53,6 +67,36 @@ struct GlassBackground: ViewModifier {
                     .strokeBorder(.white.opacity(0.35), lineWidth: 0.5)
             )
             .shadow(color: .black.opacity(0.10), radius: 14, y: 6)
+    }
+}
+
+// MARK: - Zoom-Übergang vom Heft-Cover in den Editor (ab iOS 18)
+
+struct ZoomSource: ViewModifier {
+    let id: UUID
+    let namespace: Namespace.ID
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.matchedTransitionSource(id: id, in: namespace)
+        } else {
+            content
+        }
+    }
+}
+
+struct ZoomDestination: ViewModifier {
+    let id: UUID
+    let namespace: Namespace.ID
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.navigationTransition(.zoom(sourceID: id, in: namespace))
+        } else {
+            content
+        }
     }
 }
 

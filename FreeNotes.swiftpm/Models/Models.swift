@@ -77,6 +77,8 @@ struct Notebook: Codable, Identifiable, Equatable {
     var modified = Date()
     var opened: Date? = nil
     var lastPage: Int? = nil
+    /// Per Texterkennung gelesene Handschrift und Scans, für die Suche.
+    var searchText: String? = nil
 }
 
 struct LibraryData: Codable {

@@ -52,20 +52,13 @@ enum AIClient {
                         }
                         throw makeError(status: status, body: body)
                     }
-                    for try await line in bytes.lines {
+                    lines: for try await line in bytes.lines {
                         if Task.isCancelled { break }
-                        guard line.hasPrefix("data:") else { continue }
-                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-                        if payload == "[DONE]" { break }
-                        guard let data = payload.data(using: .utf8),
-                              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-                        if json["error"] != nil {
-                            throw makeError(status: 500, body: payload)
-                        }
-                        if let choices = json["choices"] as? [[String: Any]],
-                           let delta = choices.first?["delta"] as? [String: Any],
-                           let content = delta["content"] as? String, !content.isEmpty {
-                            continuation.yield(content)
+                        switch parseEvent(line) {
+                        case .text(let content): continuation.yield(content)
+                        case .done: break lines
+                        case .error(let payload): throw makeError(status: 500, body: payload)
+                        case nil: continue
                         }
                     }
                     continuation.finish()
@@ -75,6 +68,26 @@ enum AIClient {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    enum StreamEvent: Equatable {
+        case text(String)
+        case done
+        case error(String)
+    }
+
+    /// Wertet eine Zeile des Server-Sent-Events-Streams aus.
+    static func parseEvent(_ line: String) -> StreamEvent? {
+        guard line.hasPrefix("data:") else { return nil }
+        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        if payload == "[DONE]" { return .done }
+        guard let data = payload.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if json["error"] != nil { return .error(payload) }
+        guard let choices = json["choices"] as? [[String: Any]],
+              let delta = choices.first?["delta"] as? [String: Any],
+              let content = delta["content"] as? String, !content.isEmpty else { return nil }
+        return .text(content)
     }
 
     static func makeRequest(messages: [AIMessage], config: AIConfig) throws -> URLRequest {

@@ -2,26 +2,30 @@
 
 Eine eigene GoodNotes-Alternative für die Schule:
 
-- ✍️ Mit dem **Apple Pencil** schreiben (PencilKit: Stifte, Marker, Radierer, Lineal, Lasso)
-- 📚 **Fächer** mit Farbe und Symbol, Hefte mit Papier blanko, liniert, kariert oder gepunktet
-- 📷 Buchseiten und Arbeitsblätter **scannen**, **Fotos/Screenshots** und **PDFs** einfügen
+- ✍️ Mit dem **Apple Pencil** schreiben (PencilKit: Stifte, Marker, Radierer, Lineal, Lasso), zoomen, Doppeltippen/Drücken auf dem Pencil
+- 📚 **Fächer** mit Farbe und Symbol, Hefte mit Papier blanko, liniert, kariert oder gepunktet, sortieren und durchsuchen
+- 📷 Buchseiten und Arbeitsblätter **scannen**, **Fotos/Screenshots** und **PDFs** einfügen, per Drag & Drop
+- 🖼️ Bilder auf der Seite **verschieben, skalieren und löschen**
+- 📄 Seiten hinzufügen, duplizieren, umsortieren und löschen; **blättern** per Wischen (seitlich oder nach oben/unten)
 - ✨ **KI-Kreis**: Aufgabe einkreisen → »Lösen«, »Erklären«, »Schritt für Schritt«, »Nur Tipp« … → Antwort erscheint direkt neben der Seite und kann auf die Seite eingefügt werden
-- 💬 **KI-Chat** pro Heft und allgemein, mit Bild-Anhängen
+- 🧮 Formeln in KI-Antworten werden schön gesetzt (KaTeX); ohne Internet als lesbarer Text
+- 💬 **KI-Chat** pro Heft und allgemein, mit Bild-Anhängen und der aktuellen Seite
+- 🔎 **Handschrift durchsuchbar**: Texterkennung beim Schließen eines Hefts
 - 🆓 Kostenlose KI: **Google Gemini** (Standard) oder **OpenRouter**, mit automatischem Wechsel bei Limit
 - 📤 Export als **PDF**
-- Animationen, Haptik, Hell-/Dunkelmodus
+- Animationen, Haptik, Hell-/Dunkelmodus, Liquid Glass ab iPadOS 26, Zoom-Übergang ab iPadOS 18
 
 ## Auf dem iPad starten (ohne Mac)
 
 1. Auf dem iPad die kostenlose App **Swift Playgrounds** aus dem App Store laden.
-2. In Safari dieses Repo öffnen → grüner Button **Code** → **Download ZIP**.
+2. In Safari dieses Repo öffnen, oben den Branch mit der App wählen (solange sie noch nicht in `main` ist: `claude/chat-ios-notizbuch-ki-yx5ny3`) → grüner Button **Code** → **Download ZIP**.
 3. In der **Dateien**-App die ZIP antippen (wird entpackt) und den Ordner **`FreeNotes.swiftpm`** antippen. Er öffnet sich in Swift Playgrounds.
 4. Oben auf **▶︎ Ausführen** tippen.
 5. Beim ersten Start den kostenlosen Gemini-Key eintragen ([aistudio.google.com/apikey](https://aistudio.google.com/apikey)).
 
 ## Später mit einem Mac (eigenes App-Icon)
 
-`FreeNotes.swiftpm` in Xcode öffnen, unter *Signing & Capabilities* die eigene Apple-ID als Team wählen, iPad per Kabel verbinden und auf ▶︎ drücken. Mit einer kostenlosen Apple-ID muss die App alle 7 Tage neu installiert werden.
+Siehe [`MAC-INSTALL.md`](MAC-INSTALL.md).
 
 ## Projektaufbau
 
@@ -40,5 +44,5 @@ FreeNotes.swiftpm/
   Onboarding/  Einführung beim ersten Start
 ```
 
-Jeder Push kompiliert die App automatisch auf einem Cloud-Mac (GitHub Actions, `.github/workflows/build.yml`).
+Jeder Push kompiliert die App automatisch auf einem Cloud-Mac mit Xcode 16 und Xcode 26 und führt die Logik-Tests in `LogicTests/` aus (GitHub Actions, `.github/workflows/build.yml`).
 Der ursprüngliche Plan steht in [`docs/PLAN.md`](docs/PLAN.md).

@@ -19,6 +19,7 @@ struct LibraryView: View {
     @State private var showSettings = false
     @State private var showOnboarding = false
     @State private var pendingOpen: UUID?
+    @Namespace private var zoom
 
     var body: some View {
         NavigationSplitView {
@@ -28,7 +29,7 @@ struct LibraryView: View {
             case .chat:
                 GeneralChatView(store: store, settings: settings)
             case let item:
-                NotebookGridView(filter: item,
+                NotebookGridView(filter: item, zoom: zoom,
                                  onOpen: { openNotebook = OpenNotebook(id: $0) },
                                  onNew: { showNewNotebook = true })
             }
@@ -37,6 +38,7 @@ struct LibraryView: View {
             NotebookEditorView(notebookID: item.id, store: store, settings: settings)
                 .environmentObject(store)
                 .environmentObject(settings)
+                .modifier(ZoomDestination(id: item.id, namespace: zoom))
         }
         .sheet(isPresented: $showNewNotebook, onDismiss: {
             if let id = pendingOpen {
@@ -136,6 +138,7 @@ struct SubjectSheetItem: Identifiable {
 struct NotebookGridView: View {
     @EnvironmentObject private var store: LibraryStore
     let filter: SidebarItem
+    let zoom: Namespace.ID
     var onOpen: (UUID) -> Void
     var onNew: () -> Void
 
@@ -143,6 +146,7 @@ struct NotebookGridView: View {
     @State private var renaming: Notebook?
     @State private var newTitle = ""
     @State private var deleting: Notebook?
+    @AppStorage("library.sort") private var sort = NotebookSort.modified.rawValue
 
     private var title: String {
         switch filter {
@@ -161,8 +165,19 @@ struct NotebookGridView: View {
         case .recent: list = store.notebooks.filter { $0.opened != nil }.sorted { ($0.opened ?? .distantPast) > ($1.opened ?? .distantPast) }
         case .subject(let id): list = store.notebooks.filter { $0.subjectID == id }.sorted { $0.modified > $1.modified }
         }
+        if filter != .recent {
+            switch NotebookSort(rawValue: sort) ?? .modified {
+            case .modified: break
+            case .title: list.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+            case .created: list.sort { $0.created > $1.created }
+            }
+        }
         let q = search.trimmed
-        if !q.isEmpty { list = list.filter { $0.title.localizedCaseInsensitiveContains(q) } }
+        if !q.isEmpty {
+            list = list.filter {
+                $0.title.localizedCaseInsensitiveContains(q) || ($0.searchText ?? "").localizedCaseInsensitiveContains(q)
+            }
+        }
         return list
     }
 
@@ -173,7 +188,9 @@ struct NotebookGridView: View {
                 ForEach(notebooks) { nb in
                     Button { onOpen(nb.id) } label: {
                         NotebookCoverView(notebook: nb, subject: store.subject(nb.subjectID),
-                                          thumb: store.thumbnail(notebook: nb.id), version: store.thumbVersion)
+                                          thumb: store.thumbnail(notebook: nb.id), version: store.thumbVersion,
+                                          match: contentMatch(nb))
+                            .modifier(ZoomSource(id: nb.id, namespace: zoom))
                     }
                     .buttonStyle(PressableStyle())
                     .hoverEffect(.lift)
@@ -197,8 +214,13 @@ struct NotebookGridView: View {
         }
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(title)
-        .searchable(text: $search, prompt: "Hefte durchsuchen")
+        .searchable(text: $search, prompt: "Titel oder Inhalt suchen")
         .toolbar {
+            ToolbarItem(placement: .secondaryAction) {
+                Picker("Sortieren", selection: $sort) {
+                    ForEach(NotebookSort.allCases) { Label($0.title, systemImage: $0.symbol).tag($0.rawValue) }
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button(action: onNew) { Label("Neues Heft", systemImage: "plus") }
             }
@@ -221,6 +243,15 @@ struct NotebookGridView: View {
         } message: {
             Text("Alle Seiten und der KI-Verlauf werden gelöscht.")
         }
+    }
+
+    /// Zeigt, wo der Suchbegriff in der Handschrift vorkommt.
+    private func contentMatch(_ nb: Notebook) -> String? {
+        let q = search.trimmed
+        guard !q.isEmpty, !nb.title.localizedCaseInsensitiveContains(q),
+              let line = nb.searchText?.components(separatedBy: "\n").first(where: { $0.localizedCaseInsensitiveContains(q) })
+        else { return nil }
+        return line
     }
 
     @ViewBuilder
@@ -278,6 +309,7 @@ struct NotebookCoverView: View {
     let subject: Subject?
     let thumb: UIImage?
     let version: Int
+    var match: String? = nil
 
     private var color: Color { Theme.color(notebook.colorIndex) }
 
@@ -338,6 +370,34 @@ struct NotebookCoverView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+            if let match {
+                Label(match, systemImage: "text.magnifyingglass")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.accent)
+                    .lineLimit(1)
+            }
+        }
+    }
+}
+
+enum NotebookSort: String, CaseIterable, Identifiable {
+    case modified, title, created
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .modified: return "Zuletzt geändert"
+        case .title: return "Titel"
+        case .created: return "Erstellt"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .modified: return "clock"
+        case .title: return "textformat"
+        case .created: return "calendar"
         }
     }
 }

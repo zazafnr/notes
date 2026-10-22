@@ -1,6 +1,7 @@
 import SwiftUI
 import PencilKit
 import PDFKit
+import Vision
 
 struct LassoSnapshot: Identifiable {
     let id = UUID()
@@ -17,12 +18,14 @@ final class EditorModel: ObservableObject {
     @Published var pageIndex = 0
     @Published var aiMode = false
     @Published var showPanel = false
+    @Published var imageEditMode = false
     @Published var snapshot: LassoSnapshot?
 
     weak var host: PageCanvasHost?
     private var lastLassoRect: CGRect?
     private var pending: (page: UUID, drawing: PKDrawing)?
     private var saveTask: Task<Void, Never>?
+    private var toolBeforeEraser: PKTool?
 
     init(notebookID: UUID, store: LibraryStore) {
         self.notebookID = notebookID
@@ -65,6 +68,29 @@ final class EditorModel: ObservableObject {
         store.updateNotebook(notebookID) { $0.lastPage = pageIndex }
         updateThumbnail()
         store.saveNow()
+        indexText()
+    }
+
+    /// Liest Handschrift und Scans per Texterkennung, damit man Hefte nach Inhalt durchsuchen kann.
+    func indexText() {
+        guard let nb = notebook else { return }
+        var images: [CGImage] = []
+        for page in nb.pages.prefix(40) {
+            let drawing = store.loadDrawing(notebook: notebookID, page: page.id)
+            guard !drawing.strokes.isEmpty || page.background != nil || !page.items.isEmpty else { continue }
+            let image = PageRenderer.render(page: page, drawing: drawing,
+                                            image: { [store, notebookID] in store.image($0, notebook: notebookID) },
+                                            scale: 1.2)
+            if let cg = image.cgImage { images.append(cg) }
+        }
+        let id = notebookID
+        let store = store
+        Task.detached(priority: .utility) {
+            let text = TextRecognizer.recognize(images)
+            await MainActor.run {
+                store.updateNotebook(id) { $0.searchText = text }
+            }
+        }
     }
 
     func updateThumbnail() {
@@ -82,8 +108,49 @@ final class EditorModel: ObservableObject {
         guard let nb = notebook, nb.pages.indices.contains(index), index != pageIndex else { return }
         flush()
         aiMode = false
+        imageEditMode = false
         withAnimation(.easeInOut(duration: 0.25)) { pageIndex = index }
         Haptics.tap()
+    }
+
+    /// Blättern per Wischen.
+    func flip(_ delta: Int) {
+        guard let nb = notebook else { return }
+        let target = pageIndex + delta
+        if nb.pages.indices.contains(target) {
+            goTo(target)
+        } else {
+            Haptics.soft()
+        }
+    }
+
+    func duplicatePage(at index: Int) {
+        flush()
+        guard let nb = notebook, nb.pages.indices.contains(index) else { return }
+        var copy = nb.pages[index]
+        copy.id = UUID()
+        copy.modified = Date()
+        let drawing = store.loadDrawing(notebook: notebookID, page: nb.pages[index].id)
+        store.saveDrawing(drawing, notebook: notebookID, page: copy.id)
+        store.updateNotebook(notebookID) { $0.pages.insert(copy, at: index + 1) }
+        Haptics.success()
+    }
+
+    func deletePage(at index: Int) {
+        guard let nb = notebook, nb.pages.count > 1, nb.pages.indices.contains(index) else { return }
+        if index == pageIndex { pending = nil }
+        store.deletePage(nb.pages[index].id, in: notebookID)
+        if pageIndex >= index, pageIndex > 0 { pageIndex -= 1 }
+        pageIndex = min(pageIndex, (notebook?.pages.count ?? 1) - 1)
+    }
+
+    func movePage(from index: Int, by offset: Int) {
+        flush()
+        let target = index + offset
+        guard let nb = notebook, nb.pages.indices.contains(index), nb.pages.indices.contains(target) else { return }
+        let currentID = nb.pages[pageIndex].id
+        store.updateNotebook(notebookID) { $0.pages.swapAt(index, target) }
+        pageIndex = notebook?.pages.firstIndex(where: { $0.id == currentID }) ?? pageIndex
     }
 
     func addPage(_ paper: PaperStyle) {
@@ -178,18 +245,45 @@ final class EditorModel: ObservableObject {
         addImage(image, below: lastLassoRect)
     }
 
-    func removeLastImage() {
+    func setItems(_ items: [PageImageItem], pageID: UUID) {
         store.updateNotebook(notebookID) { nb in
-            guard nb.pages.indices.contains(pageIndex), !nb.pages[pageIndex].items.isEmpty else { return }
-            nb.pages[pageIndex].items.removeLast()
+            guard let i = nb.pages.firstIndex(where: { $0.id == pageID }) else { return }
+            nb.pages[i].items = items
         }
+    }
+
+    func toggleImageEditMode() {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+            imageEditMode.toggle()
+            if imageEditMode { aiMode = false }
+        }
+        Haptics.tap()
     }
 
     // MARK: KI
 
     func toggleAIMode() {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { aiMode.toggle() }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+            aiMode.toggle()
+            if aiMode { imageEditMode = false }
+        }
         Haptics.tap()
+    }
+
+    /// Doppeltippen oder Drücken auf dem Apple Pencil.
+    func pencilAction(_ action: PencilAction) {
+        switch action {
+        case .ai:
+            toggleAIMode()
+        case .eraser:
+            if toolPicker.selectedTool is PKEraserTool {
+                toolPicker.selectedTool = toolBeforeEraser ?? PKInkingTool(.pen, color: .black, width: 4)
+            } else {
+                toolBeforeEraser = toolPicker.selectedTool
+                toolPicker.selectedTool = PKEraserTool(.vector)
+            }
+            Haptics.tap()
+        }
     }
 
     func handleLasso(rect: CGRect, drawing: PKDrawing, pageID: UUID) {
@@ -255,5 +349,26 @@ struct AnswerCardView: View {
         .background(Color(red: 0.97, green: 0.96, blue: 1.0), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.aiGradient, lineWidth: 2))
         .environment(\.colorScheme, .light)
+    }
+}
+
+/// Texterkennung mit Vision (Deutsch und Englisch, auch Handschrift).
+enum TextRecognizer {
+    static func recognize(_ images: [CGImage]) -> String {
+        var lines: [String] = []
+        for image in images {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["de-DE", "en-US"]
+            request.usesLanguageCorrection = true
+            let handler = VNImageRequestHandler(cgImage: image, options: [:])
+            try? handler.perform([request])
+            for observation in request.results ?? [] {
+                if let candidate = observation.topCandidates(1).first {
+                    lines.append(candidate.string)
+                }
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 }
