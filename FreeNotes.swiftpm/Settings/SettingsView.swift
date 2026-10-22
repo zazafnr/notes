@@ -8,18 +8,6 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("KI-Anbieter", selection: $settings.provider) {
-                        ForEach(AIProviderKind.allCases) { p in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(p.title)
-                                Text(p.isFree ? "kostenlos" : "kostenpflichtig, beste Qualität")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .tag(p)
-                        }
-                    }
-                    .pickerStyle(.inline)
                     Toggle("Bei Fehlern einen anderen Anbieter nehmen", isOn: $settings.autoFallback)
                     Picker("Klassenstufe", selection: $settings.grade) {
                         ForEach(AISettings.grades, id: \.self) { Text($0).tag($0) }
@@ -27,7 +15,7 @@ struct SettingsView: View {
                 } header: {
                     Text("KI")
                 } footer: {
-                    Text("Die App benutzt immer den hier gewählten Anbieter. Umschalten geht auch direkt im KI-Fenster (⋯). Ist »Bei Fehlern …« an und der Anbieter antwortet nicht (Limit, kein Netz), springt ein anderer mit Key ein.")
+                    Text("Welchen Anbieter die App benutzt, wählst du unten beim jeweiligen Anbieter (»Diesen Anbieter verwenden«) oder direkt im KI-Fenster (⋯). Ist »Bei Fehlern …« an und er antwortet nicht (Limit, kein Netz), springt ein anderer mit Key ein.")
                 }
 
                 Section {
@@ -95,6 +83,17 @@ struct ProviderSection: View {
 
     var body: some View {
         Section {
+            Button {
+                settings.provider = provider
+                Haptics.tap()
+            } label: {
+                HStack {
+                    Label(settings.provider == provider ? "Wird verwendet" : "Diesen Anbieter verwenden",
+                          systemImage: settings.provider == provider ? "checkmark.circle.fill" : "circle")
+                    Spacer()
+                }
+            }
+            .disabled(settings.provider == provider)
             SecureField("API-Key einfügen", text: $key)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
