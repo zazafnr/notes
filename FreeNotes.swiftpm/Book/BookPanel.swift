@@ -5,35 +5,130 @@ import UniformTypeIdentifiers
 
 /// Browser für das Schulbuch (z. B. digi4school) oder ein PDF-Buch.
 /// Die Anmeldung passiert direkt hier; die App speichert keine Passwörter, nur das Login-Cookie wie Safari.
+/// Seiten, die ein neues Fenster öffnen (digi4school »Öffnen«), erscheinen als weitere Ebene im selben Fenster.
 @MainActor
-final class BookBrowser: ObservableObject {
+final class BookBrowser: NSObject, ObservableObject, WKUIDelegate, WKNavigationDelegate {
     static let startURL = URL(string: "https://digi4school.at")!
 
-    let webView: WKWebView
+    private let mainWebView: WKWebView
+    /// Neue Fenster, die eine Seite geöffnet hat (oberstes wird angezeigt).
+    @Published private(set) var popups: [WKWebView] = []
     @Published var canGoBack = false
     @Published var canGoForward = false
     @Published var isLoading = false
     @Published var title = ""
     @Published var currentURL: URL?
 
-    init() {
+    private var bindings: Set<AnyCancellable> = []
+
+    /// Das gerade sichtbare Fenster.
+    var webView: WKWebView { popups.last ?? mainWebView }
+
+    /// Zurück geht auch aus einem neuen Fenster wieder zur Bücherliste.
+    var canNavigateBack: Bool { canGoBack || !popups.isEmpty }
+
+    override init() {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()   // Login bleibt erhalten
         config.allowsInlineMediaPlayback = true
-        webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true
-        webView.publisher(for: \.canGoBack).receive(on: DispatchQueue.main).assign(to: &$canGoBack)
-        webView.publisher(for: \.canGoForward).receive(on: DispatchQueue.main).assign(to: &$canGoForward)
-        webView.publisher(for: \.isLoading).receive(on: DispatchQueue.main).assign(to: &$isLoading)
-        webView.publisher(for: \.title).map { $0 ?? "" }.receive(on: DispatchQueue.main).assign(to: &$title)
-        webView.publisher(for: \.url).receive(on: DispatchQueue.main).assign(to: &$currentURL)
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        // Manche Seiten erkennen Browser am »Safari« im User-Agent.
+        config.applicationNameForUserAgent = "Version/18.0 Mobile/15E148 Safari/604.1"
+        mainWebView = WKWebView(frame: .zero, configuration: config)
+        super.init()
+        configure(mainWebView)
+        bind(mainWebView)
+    }
+
+    private func configure(_ web: WKWebView) {
+        web.uiDelegate = self
+        web.navigationDelegate = self
+        web.allowsBackForwardNavigationGestures = true
+    }
+
+    /// Anzeige (Titel, Zurück, Laden) folgt immer dem sichtbaren Fenster.
+    private func bind(_ web: WKWebView) {
+        bindings.removeAll()
+        web.publisher(for: \.canGoBack).receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.canGoBack = $0 }.store(in: &bindings)
+        web.publisher(for: \.canGoForward).receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.canGoForward = $0 }.store(in: &bindings)
+        web.publisher(for: \.isLoading).receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.isLoading = $0 }.store(in: &bindings)
+        web.publisher(for: \.title).receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.title = $0 ?? "" }.store(in: &bindings)
+        web.publisher(for: \.url).receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.currentURL = $0 }.store(in: &bindings)
     }
 
     func open(_ url: URL) {
+        closeAllPopups()
         if url.isFileURL {
-            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            mainWebView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         } else {
-            webView.load(URLRequest(url: url))
+            mainWebView.load(URLRequest(url: url))
+        }
+    }
+
+    func goBack() {
+        if webView.canGoBack {
+            webView.goBack()
+        } else if let top = popups.last {
+            close(top)
+        }
+    }
+
+    func goForward() { webView.goForward() }
+    func reload() { webView.reload() }
+
+    private func close(_ popup: WKWebView) {
+        popup.stopLoading()
+        popups.removeAll { $0 === popup }
+        bind(webView)
+    }
+
+    private func closeAllPopups() {
+        popups.forEach { $0.stopLoading() }
+        popups.removeAll()
+        bind(mainWebView)
+    }
+
+    // MARK: Neue Fenster (target="_blank", window.open)
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        let popup = WKWebView(frame: webView.bounds, configuration: configuration)
+        configure(popup)
+        popups.append(popup)
+        bind(popup)
+        return popup
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        close(webView)
+    }
+
+    // MARK: Hinweise der Seite (alert/confirm) anzeigen, sonst bleibt sie hängen
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo) async {
+        _ = await presentAlert(message: message, confirm: false)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo) async -> Bool {
+        await presentAlert(message: message, confirm: true)
+    }
+
+    private func presentAlert(message: String, confirm: Bool) async -> Bool {
+        guard let presenter = webView.window?.rootViewController?.topMost else { return confirm }
+        return await withCheckedContinuation { continuation in
+            let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in continuation.resume(returning: true) })
+            if confirm {
+                alert.addAction(UIAlertAction(title: "Abbrechen", style: .cancel) { _ in continuation.resume(returning: false) })
+            }
+            presenter.present(alert, animated: true)
         }
     }
 
@@ -42,6 +137,13 @@ final class BookBrowser: ObservableObject {
         let config = WKSnapshotConfiguration()
         if let rect { config.rect = rect }
         return try? await webView.takeSnapshot(configuration: config)
+    }
+}
+
+extension UIViewController {
+    /// Oberster angezeigter Controller (für Hinweis-Fenster).
+    var topMost: UIViewController {
+        presentedViewController?.topMost ?? self
     }
 }
 
@@ -148,11 +250,11 @@ struct BookPanel: View {
 
     private var toolbar: some View {
         HStack(spacing: 2) {
-            Button { browser.webView.goBack() } label: { ToolbarIcon(symbol: "chevron.backward") }
-                .disabled(!browser.canGoBack)
-            Button { browser.webView.goForward() } label: { ToolbarIcon(symbol: "chevron.forward") }
+            Button { browser.goBack() } label: { ToolbarIcon(symbol: "chevron.backward") }
+                .disabled(!browser.canNavigateBack)
+            Button { browser.goForward() } label: { ToolbarIcon(symbol: "chevron.forward") }
                 .disabled(!browser.canGoForward)
-            Button { browser.webView.reload() } label: { ToolbarIcon(symbol: "arrow.clockwise") }
+            Button { browser.reload() } label: { ToolbarIcon(symbol: "arrow.clockwise") }
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(browser.title.isEmpty ? "Buch" : browser.title)
@@ -223,11 +325,28 @@ struct BookPanel: View {
     }
 }
 
+/// Zeigt das gerade aktive Fenster (Hauptseite oder ein neu geöffnetes Buch).
 struct BookWebView: UIViewRepresentable {
     let webView: WKWebView
 
-    func makeUIView(context: Context) -> WKWebView { webView }
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.backgroundColor = .systemBackground
+        embed(in: container)
+        return container
+    }
+
+    func updateUIView(_ container: UIView, context: Context) {
+        embed(in: container)
+    }
+
+    private func embed(in container: UIView) {
+        guard webView.superview !== container else { return }
+        container.subviews.forEach { $0.removeFromSuperview() }
+        webView.frame = container.bounds
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(webView)
+    }
 }
 
 /// Leuchtende Schleife über dem Buch; meldet das umschlossene Rechteck.
