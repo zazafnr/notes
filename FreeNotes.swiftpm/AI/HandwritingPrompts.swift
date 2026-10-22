@@ -84,7 +84,7 @@ enum HandwritingPrompts {
 
     static let worksheetSystem = """
     Du hilfst einem Schüler, ein Arbeitsblatt auszufüllen. Du siehst einen Ausschnitt des Blatts als Bild \
-    (mit hellblauem Koordinaten-Raster, nur zum Ablesen) und bekommst die erkannten gedruckten Textzeilen mit Position. \
+    (mit hellblauem Koordinaten-Raster, nur zum Ablesen). \
     Finde die Stellen, an die der Schüler schreiben muss (Lücken, Schreiblinien, leere Tabellenfelder, Kästchen, \
     Platz unter einer Frage), und trage die Lösungen ein.
 
@@ -102,7 +102,8 @@ enum HandwritingPrompts {
     """
 
     static func worksheetUser(imageSize: CGSize, ocr: [OCRLine], solutions: String?, taskRect: CGRect? = nil) -> String {
-        var text = "Bildgröße: \(Int(imageSize.width)) × \(Int(imageSize.height)) Pixel.\n\nErkannte Textzeilen (x, y, w, h in Pixeln):\n"
+        var text = "Bildgröße: \(Int(imageSize.width)) × \(Int(imageSize.height)) Pixel.\n"
+        if !ocr.isEmpty { text += "\nErkannte Textzeilen (x, y, w, h in Pixeln):\n" }
         for line in ocr.prefix(160) {
             let r = line.rect
             text += "[\(Int(r.minX)), \(Int(r.minY)), \(Int(r.width)), \(Int(r.height))] \(line.text)\n"

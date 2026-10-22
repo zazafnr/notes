@@ -1,5 +1,4 @@
 import SwiftUI
-import Vision
 
 /// Arbeitsblatt ausfüllen: Die KI liest den (eingekreisten) Ausschnitt scharf, gibt die Stellen an,
 /// die App rastet sie auf Linien und Tabellenzellen ein, dann wird in deiner Handschrift eingetragen.
@@ -248,16 +247,21 @@ struct WorksheetFillSheet: View {
         let effort = solutions != nil || retry ? "low" : "medium"
         let unit = Double(crop.scale)
 
-        let running = Task {
-            let prepared = await Task.detached(priority: .userInitiated) { () -> ([HandwritingPrompts.OCRLine], WorksheetVision.Gray?, UIImage) in
-                let ocr = WorksheetOCR.lines(in: cg, size: pixelSize)
-                return (ocr, WorksheetVision.gray(from: cg), WorksheetGrid.image(from: cg))
-            }.value
-            guard !Task.isCancelled else { return }
-            stage = .thinking
+        // Raster und Graustufen gehen in Millisekunden – direkt hier, ohne Hintergrund-Umweg.
+        // (Die Texterkennung von Apple ist weggefallen: Sie blieb in Swift Playgrounds manchmal hängen,
+        // und die KI liest den scharfen Ausschnitt ohnehin selbst.)
+        let gridImage = WorksheetGrid.image(from: cg)
+        let gray = WorksheetVision.gray(from: cg)
+        guard let base64 = gridImage.jpegBase64(maxSide: 1600) else {
+            stage = .done
+            error = "Die Seite konnte nicht gelesen werden."
+            return
+        }
+        stage = .thinking
+
+        let running = Task { @MainActor in
             do {
-                guard let base64 = prepared.2.jpegBase64(maxSide: 1600) else { throw AIError.empty }
-                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: prepared.0, solutions: solutions, taskRect: taskRect)
+                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: [], solutions: solutions, taskRect: taskRect)
                 let raw = try await AIRequest.text(system: HandwritingPrompts.worksheetSystem, user: user, images: [base64],
                                                    settings: settings, effort: effort) { _ in
                     if stage == .thinking { stage = .answering }
@@ -265,7 +269,7 @@ struct WorksheetFillSheet: View {
                 guard !Task.isCancelled else { return }
                 let page = CGRect(origin: .zero, size: pageSize)
                 let parsed: [WorksheetField] = WorksheetField.pixelFields(raw).compactMap { item in
-                    let snapped = prepared.1.map { WorksheetVision.snap(item.rect, gray: $0, unit: unit) } ?? item.rect
+                    let snapped = gray.map { WorksheetVision.snap(item.rect, gray: $0, unit: unit) } ?? item.rect
                     let rect = crop.toPage(snapped).intersection(page)
                     guard !rect.isNull, rect.width > 4, rect.height > 4 else { return nil }
                     return WorksheetField(text: item.text, rect: rect)
@@ -286,7 +290,7 @@ struct WorksheetFillSheet: View {
             stage = .done
         }
         task = running
-        watchdog = Task {
+        watchdog = Task { @MainActor in
             try? await Task.sleep(nanoseconds: timeout * 1_000_000_000)
             guard !Task.isCancelled else { return }
             timedOut = true
@@ -331,25 +335,5 @@ enum WorksheetGrid {
                 ("\(y)" as NSString).draw(at: CGPoint(x: 2, y: y + 2), withAttributes: attributes)
             }
         }
-    }
-}
-
-/// Gedruckte Textzeilen mit Position (in Bildpixeln, Ursprung oben links).
-enum WorksheetOCR {
-    static func lines(in image: CGImage, size: CGSize) -> [HandwritingPrompts.OCRLine] {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["de-DE", "en-US"]
-        // Ohne Sprachkorrektur deutlich schneller; es geht nur um Lage und ungefähren Text
-        request.usesLanguageCorrection = false
-        try? VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
-        let lines = (request.results ?? []).compactMap { obs -> HandwritingPrompts.OCRLine? in
-            guard let text = obs.topCandidates(1).first?.string else { return nil }
-            let b = obs.boundingBox
-            let rect = CGRect(x: b.minX * size.width, y: (1 - b.maxY) * size.height,
-                              width: b.width * size.width, height: b.height * size.height)
-            return HandwritingPrompts.OCRLine(text: text, rect: rect)
-        }
-        return lines.sorted { abs($0.rect.minY - $1.rect.minY) < 6 ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY }
     }
 }
