@@ -249,10 +249,9 @@ struct WorksheetFillSheet: View {
         let unit = Double(crop.scale)
 
         let running = Task {
-            let prepared = await Task.detached(priority: .userInitiated) { () -> ([HandwritingPrompts.OCRLine], [Bool], UIImage) in
+            let prepared = await Task.detached(priority: .userInitiated) { () -> ([HandwritingPrompts.OCRLine], WorksheetVision.Gray?, UIImage) in
                 let ocr = WorksheetOCR.lines(in: cg, size: pixelSize)
-                let ink = WorksheetVision.gray(from: cg).map(WorksheetVision.inkMask) ?? []
-                return (ocr, ink, WorksheetGrid.image(from: cg))
+                return (ocr, WorksheetVision.gray(from: cg), WorksheetGrid.image(from: cg))
             }.value
             guard !Task.isCancelled else { return }
             stage = .thinking
@@ -264,10 +263,9 @@ struct WorksheetFillSheet: View {
                     if stage == .thinking { stage = .answering }
                 }
                 guard !Task.isCancelled else { return }
-                let w = Int(pixelSize.width), h = Int(pixelSize.height)
                 let page = CGRect(origin: .zero, size: pageSize)
                 let parsed: [WorksheetField] = WorksheetField.pixelFields(raw).compactMap { item in
-                    let snapped = WorksheetVision.snap(item.rect, ink: prepared.1, width: w, height: h, unit: unit)
+                    let snapped = prepared.1.map { WorksheetVision.snap(item.rect, gray: $0, unit: unit) } ?? item.rect
                     let rect = crop.toPage(snapped).intersection(page)
                     guard !rect.isNull, rect.width > 4, rect.height > 4 else { return nil }
                     return WorksheetField(text: item.text, rect: rect)
@@ -279,10 +277,8 @@ struct WorksheetFillSheet: View {
                 }
             } catch {
                 watchdog?.cancel()
-                if timedOut {
-                    self.error = "Die KI hat zu lange gebraucht (über \(timeout) s). Beim nächsten Versuch denkt sie kürzer nach."
-                } else if error is CancellationError || Task.isCancelled {
-                    return
+                if timedOut || error is CancellationError || Task.isCancelled {
+                    return   // Zeitlimit meldet der Wächter selbst
                 } else {
                     self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 }
@@ -295,6 +291,9 @@ struct WorksheetFillSheet: View {
             guard !Task.isCancelled else { return }
             timedOut = true
             running.cancel()
+            // Sofort Bescheid geben, auch wenn ein Schritt noch hängt
+            error = "Das hat zu lange gedauert (über \(timeout) s). Versuch es nochmal – dann geht es schneller."
+            stage = .done
         }
     }
 }
@@ -341,7 +340,8 @@ enum WorksheetOCR {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = ["de-DE", "en-US"]
-        request.usesLanguageCorrection = true
+        // Ohne Sprachkorrektur deutlich schneller; es geht nur um Lage und ungefähren Text
+        request.usesLanguageCorrection = false
         try? VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
         let lines = (request.results ?? []).compactMap { obs -> HandwritingPrompts.OCRLine? in
             guard let text = obs.topCandidates(1).first?.string else { return nil }

@@ -244,18 +244,26 @@ final class WorksheetVisionTests: XCTestCase {
         img.fill(CGRect(x: 50, y: 160, width: 500, height: 2))
         // Text in einer anderen Zeile (soll nicht als Linie gelten)
         for i in 0..<30 { img.fill(CGRect(x: 60 + i * 15, y: 220, width: 8, height: 22)) }
-        let ink = WorksheetVision.inkMask(img)
         // KI-Schätzung etwas zu tief und zu groß
-        let snapped = WorksheetVision.snap(CGRect(x: 100, y: 115, width: 300, height: 60), ink: ink, width: 600, height: 300, unit: 2)
+        let snapped = WorksheetVision.snap(CGRect(x: 100, y: 115, width: 300, height: 60), gray: img, unit: 2)
         XCTAssertLessThan(snapped.maxY, 160)
         XCTAssertGreaterThan(snapped.maxY, 150)
         XCTAssertGreaterThan(snapped.minY, 100)
         // Keine Linie in der Nähe: bleibt unverändert
         let free = CGRect(x: 100, y: 20, width: 200, height: 30)
-        XCTAssertEqual(WorksheetVision.snap(free, ink: ink, width: 600, height: 300, unit: 2), free)
-        // Textzeile ist keine Linie
-        XCTAssertFalse(WorksheetVision.isLine(ink, width: 600, height: 300, y: 231, x0: 60, x1: 500, unit: 2))
-        XCTAssertTrue(WorksheetVision.isLine(ink, width: 600, height: 300, y: 101, x0: 60, x1: 500, unit: 2))
+        XCTAssertEqual(WorksheetVision.snap(free, gray: img, unit: 2), free)
+        // Textzeile ist keine Linie, die Tabellenlinie schon
+        let t = WorksheetVision.threshold(img, around: CGRect(x: 0, y: 0, width: 600, height: 300))
+        XCTAssertFalse(WorksheetVision.isLine(img, threshold: t, y: 231, x0: 60, x1: 500, unit: 2))
+        XCTAssertTrue(WorksheetVision.isLine(img, threshold: t, y: 101, x0: 60, x1: 500, unit: 2))
+    }
+
+    func testThresholdAdaptsToGrayPhotos() {
+        var img = WorksheetVision.Gray(width: 200, height: 100, pixels: [UInt8](repeating: 170, count: 200 * 100))
+        img.fill(CGRect(x: 10, y: 50, width: 180, height: 2), value: 60)
+        let t = WorksheetVision.threshold(img, around: CGRect(x: 0, y: 0, width: 200, height: 100))
+        XCTAssertLessThan(t, 170)
+        XCTAssertGreaterThan(t, 60)
     }
 
     func testJSONObjectsSurviveNoiseAndTruncation() {
