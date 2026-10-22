@@ -80,6 +80,9 @@ final class InkSettings: ObservableObject {
         if !tool.usesColor { tool = .pen }
     }
 
+    /// Strichstärke des Stifts (auch für die vorgeschriebene Handschrift).
+    var penWidth: CGFloat { width(for: .pen) }
+
     private func width(for tool: InkTool) -> CGFloat {
         let i = min(max(widthIndex, 0), 2)
         switch tool {

@@ -89,6 +89,32 @@ struct Page: Codable, Identifiable, Equatable {
 
     var size: CGSize { CGSize(width: width, height: height) }
     var bounds: CGRect { CGRect(origin: .zero, size: size) }
+
+    /// Abbildung der Seitenkoordinaten beim Drehen um 90° (im oder gegen den Uhrzeigersinn).
+    static func rotationTransform(size: CGSize, clockwise: Bool) -> CGAffineTransform {
+        clockwise
+            ? CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: size.height, ty: 0)
+            : CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: size.width)
+    }
+
+    /// Die gedrehte Seite: Breite und Höhe getauscht, Bilder mitgedreht.
+    /// Der Hintergrund-Scan muss separat gedreht werden (`background` wird nicht verändert).
+    func rotated(clockwise: Bool) -> Page {
+        let t = Page.rotationTransform(size: size, clockwise: clockwise)
+        var copy = self
+        copy.width = height
+        copy.height = width
+        copy.items = items.map { item in
+            var moved = item
+            let c = item.center.applying(t)
+            moved.frame = CGRect(x: c.x - item.frame.width / 2, y: c.y - item.frame.height / 2,
+                                 width: item.frame.width, height: item.frame.height)
+            moved.rotation = Double(item.angle) + (clockwise ? .pi / 2 : -.pi / 2)
+            return moved
+        }
+        copy.modified = Date()
+        return copy
+    }
 }
 
 struct Notebook: Codable, Identifiable, Equatable {

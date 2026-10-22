@@ -27,7 +27,22 @@ final class EditorModel: ObservableObject {
     @Published var bookFullScreen = false
     @Published var snapshot: LassoSnapshot?
 
-    weak var host: PageCanvasHost?
+    weak var host: PageCanvasHost? {
+        didSet {
+            // Neue Seite angezeigt: ggf. dort weiterschreiben
+            if host !== oldValue, !writingQueue.isEmpty {
+                Task { @MainActor [weak self] in self?.continueWriting() }
+            }
+        }
+    }
+
+    /// Handschrift, die gerade vorgeschrieben wird.
+    @Published var writing: WritingStatus?
+    var animator: HandwritingAnimator?
+    var writingQueue: [WritingPart] = []
+    var skipWritingAnimation = false
+    var navigatingForWriting = false
+
     private var lastLassoRect: CGRect?
     private var pending: (page: UUID, drawing: PKDrawing)?
     private var saveTask: Task<Void, Never>?
@@ -72,6 +87,7 @@ final class EditorModel: ObservableObject {
     func close() {
         guard !isClosed else { return }
         isClosed = true
+        skipWriting()
         flush()
         store.updateNotebook(notebookID) { $0.lastPage = pageIndex }
         updateThumbnail()
@@ -114,6 +130,8 @@ final class EditorModel: ObservableObject {
 
     func goTo(_ index: Int) {
         guard let nb = notebook, nb.pages.indices.contains(index), index != pageIndex else { return }
+        // Selbst geblättert, während geschrieben wird: den Rest sofort fertig schreiben
+        if writing != nil, !navigatingForWriting { skipWriting() }
         flush()
         aiMode = false
         imageEditMode = false
@@ -142,6 +160,32 @@ final class EditorModel: ObservableObject {
         let drawing = store.loadDrawing(notebook: notebookID, page: nb.pages[index].id)
         store.saveDrawing(drawing, notebook: notebookID, page: copy.id)
         store.updateNotebook(notebookID) { $0.pages.insert(copy, at: index + 1) }
+        Haptics.success()
+    }
+
+    /// Dreht eine Seite um 90° – Tinte, Bilder und Scan drehen sich mit (z. B. für Querformat).
+    func rotatePage(at index: Int, clockwise: Bool) {
+        skipWriting()
+        flush()
+        guard let nb = notebook, nb.pages.indices.contains(index) else { return }
+        let page = nb.pages[index]
+        var rotated = page.rotated(clockwise: clockwise)
+        // Neue Seiten-ID, damit die Zeichenfläche frisch geladen wird (Rückgängig-Verlauf passt sonst nicht mehr)
+        rotated.id = UUID()
+        let t = Page.rotationTransform(size: page.size, clockwise: clockwise)
+        let drawing = store.loadDrawing(notebook: notebookID, page: page.id).transformed(using: t)
+        if let bg = page.background, let image = store.image(bg, notebook: notebookID),
+           let turned = image.rotatedQuarter(clockwise: clockwise),
+           let name = store.saveAsset(turned, notebook: notebookID) {
+            rotated.background = name
+        }
+        store.saveDrawing(drawing, notebook: notebookID, page: rotated.id)
+        store.updateNotebook(notebookID) { nb in
+            guard let i = nb.pages.firstIndex(where: { $0.id == page.id }) else { return }
+            nb.pages[i] = rotated
+        }
+        store.removeDrawing(notebook: notebookID, page: page.id)
+        if index == 0 { updateThumbnail() }
         Haptics.success()
     }
 
@@ -381,13 +425,13 @@ final class EditorModel: ObservableObject {
         snapshot = LassoSnapshot(image: image, rect: rect)
     }
 
-    func currentPageImage() -> UIImage? {
+    func currentPageImage(scale: CGFloat = 1.4) -> UIImage? {
         guard let page = currentPage else { return nil }
         flush()
         let drawing = host?.canvas.drawing ?? store.loadDrawing(notebook: notebookID, page: page.id)
         return PageRenderer.render(page: page, drawing: drawing,
                                    image: { [store, notebookID] in store.image($0, notebook: notebookID) },
-                                   scale: 1.4)
+                                   scale: scale)
     }
 
     // MARK: Export

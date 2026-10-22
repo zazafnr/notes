@@ -21,6 +21,8 @@ struct NotebookEditorView: View {
     @State private var confirmDelete = false
     @State private var shareURL: ShareItem?
     @State private var totalWidth: CGFloat = 1000
+    @State private var writeRequest: WriteRequest?
+    @State private var worksheet: WorksheetRequest?
 
     init(notebookID: UUID, store: LibraryStore, settings: AISettings) {
         _model = StateObject(wrappedValue: EditorModel(notebookID: notebookID, store: store))
@@ -32,7 +34,7 @@ struct NotebookEditorView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color(uiColor: .systemGray5).ignoresSafeArea()
+            EditorBackdrop(tint: Theme.color(model.notebook?.colorIndex ?? 0))
 
             if let page = model.currentPage {
                 PageCanvas(model: model, ink: model.ink, store: store, page: page, fingerDrawing: settings.fingerDrawing,
@@ -66,7 +68,7 @@ struct NotebookEditorView: View {
             if model.showPanel {
                 AIPanelView(chat: chat, title: model.notebook?.title ?? "KI",
                             onClose: { model.showPanel = false },
-                            onInsert: { model.insertAnswer($0) },
+                            onInsert: { answer, question, mode in insert(answer, question: question, mode: mode) },
                             pageImage: { model.currentPageImage() })
                     .frame(width: 420)
                     .glass(cornerRadius: 26)
@@ -76,6 +78,14 @@ struct NotebookEditorView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        .overlay(alignment: .bottom) {
+            if let status = model.writing {
+                WritingStatusBar(model: model, status: status)
+                    .padding(.bottom, 28)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: model.writing)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: model.showPanel)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.aiMode)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.imageEditMode)
@@ -155,6 +165,12 @@ struct NotebookEditorView: View {
                 if let data = try? Data(contentsOf: url), let img = UIImage(data: data) { model.addImage(img) }
             }
         }
+        .sheet(item: $writeRequest) { request in
+            HandwritingWriteSheet(model: model, request: request)
+        }
+        .sheet(item: $worksheet) { request in
+            WorksheetFillSheet(model: model, solutions: request.solutions)
+        }
         .sheet(isPresented: $showPages) {
             PageOverviewView(model: model)
         }
@@ -172,6 +188,19 @@ struct NotebookEditorView: View {
 
     /// Buch und Heft teilen sich den Bildschirm 50/50.
     private var bookWidth: CGFloat { max(totalWidth / 2, 320) }
+
+    /// KI-Antwort ins Heft: in Handschrift, aufs Arbeitsblatt oder als Karte.
+    private func insert(_ answer: ChatMessage, question: ChatMessage?, mode: InsertMode) {
+        switch mode {
+        case .handwriting:
+            let images = question?.images.compactMap { store.chatImage($0) } ?? []
+            writeRequest = WriteRequest(answer: answer.text, question: question.map { $0.prompt ?? $0.text }, images: images)
+        case .worksheet:
+            worksheet = WorksheetRequest(solutions: answer.text)
+        case .card:
+            model.insertAnswer(answer.text)
+        }
+    }
 
     /// Passt sich der Breite an: mit Titel, ohne Titel oder in zwei Reihen.
     private var topBar: some View {
@@ -261,6 +290,22 @@ struct NotebookEditorView: View {
             .help("Buch daneben öffnen")
 
             Menu {
+                Section {
+                    Button { writeRequest = WriteRequest(answer: "") } label: {
+                        Label("Text in meiner Handschrift schreiben", systemImage: "pencil.and.scribble")
+                    }
+                    Button { worksheet = WorksheetRequest(solutions: nil) } label: {
+                        Label("Zettel mit KI ausfüllen", systemImage: "doc.text.viewfinder")
+                    }
+                }
+                Section {
+                    Button { model.rotatePage(at: model.pageIndex, clockwise: false) } label: {
+                        Label("Seite nach links drehen", systemImage: "rotate.left")
+                    }
+                    Button { model.rotatePage(at: model.pageIndex, clockwise: true) } label: {
+                        Label("Seite nach rechts drehen", systemImage: "rotate.right")
+                    }
+                }
                 Button {
                     if let url = model.exportPDF() { shareURL = ShareItem(url: url) }
                 } label: { Label("Als PDF teilen", systemImage: "square.and.arrow.up") }
@@ -395,6 +440,11 @@ struct NotebookEditorView: View {
     }
 }
 
+struct WorksheetRequest: Identifiable {
+    let id = UUID()
+    var solutions: String?
+}
+
 struct ShareItem: Identifiable {
     let id = UUID()
     let url: URL
@@ -429,6 +479,12 @@ struct PageOverviewView: View {
                             Button { model.duplicatePage(at: index) } label: {
                                 Label("Duplizieren", systemImage: "plus.square.on.square")
                             }
+                            Button { model.rotatePage(at: index, clockwise: false) } label: {
+                                Label("Nach links drehen", systemImage: "rotate.left")
+                            }
+                            Button { model.rotatePage(at: index, clockwise: true) } label: {
+                                Label("Nach rechts drehen", systemImage: "rotate.right")
+                            }
                             Button { model.movePage(from: index, by: -1) } label: {
                                 Label("Nach vorne", systemImage: "arrow.left")
                             }
@@ -449,7 +505,7 @@ struct PageOverviewView: View {
             }
             .navigationTitle("Seiten")
             .safeAreaInset(edge: .bottom) {
-                Text("Lange drücken zum Duplizieren, Verschieben oder Löschen")
+                Text("Lange drücken zum Duplizieren, Drehen, Verschieben oder Löschen")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 8)

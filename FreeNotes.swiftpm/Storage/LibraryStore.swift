@@ -190,6 +190,10 @@ final class LibraryStore: ObservableObject {
         try? drawing.dataRepresentation().write(to: drawingURL(notebook: notebook, page: page), options: .atomic)
     }
 
+    func removeDrawing(notebook: UUID, page: UUID) {
+        try? FileManager.default.removeItem(at: drawingURL(notebook: notebook, page: page))
+    }
+
     // MARK: Bilder
 
     func saveAsset(_ image: UIImage, notebook: UUID) -> String? {

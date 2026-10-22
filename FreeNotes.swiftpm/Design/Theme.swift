@@ -130,6 +130,21 @@ extension UIImage {
         }
     }
 
+    /// Um 90° gedreht (für gedrehte Scan-Seiten).
+    func rotatedQuarter(clockwise: Bool) -> UIImage? {
+        guard size.width > 0, size.height > 0 else { return nil }
+        let newSize = CGSize(width: size.height, height: size.width)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: newSize, format: format).image { context in
+            let ctx = context.cgContext
+            ctx.translateBy(x: newSize.width / 2, y: newSize.height / 2)
+            ctx.rotate(by: clockwise ? .pi / 2 : -.pi / 2)
+            draw(in: CGRect(x: -size.width / 2, y: -size.height / 2, width: size.width, height: size.height))
+        }
+    }
+
     func jpegBase64(maxSide: CGFloat = 1600) -> String? {
         downscaled(maxSide: maxSide).jpegData(compressionQuality: 0.85)?.base64EncodedString()
     }

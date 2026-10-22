@@ -117,6 +117,8 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     let imageOverlay = ImageEditOverlay()
     let geometry = GeometryOverlayView()
     let lasso = LassoOverlayView()
+    /// Ebene über der Tinte für Handschrift, die gerade »geschrieben« wird (Seitenkoordinaten).
+    let writingLayer = UIView()
     private(set) var page: Page
 
     var flipDirection: FlipDirection = .horizontal
@@ -190,6 +192,9 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         canvas.contentInset = insets
         canvas.delegate = self
         canvas.insertSubview(paper, at: 0)
+        writingLayer.isUserInteractionEnabled = false
+        writingLayer.backgroundColor = .clear
+        canvas.addSubview(writingLayer)
         addSubview(canvas)
 
         imageOverlay.paper = paper
@@ -254,10 +259,18 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         }
     }
 
+    /// Während die Handschrift vorgeschrieben wird, ist die Seite gesperrt.
+    var isWriting = false {
+        didSet {
+            guard isWriting != oldValue else { return }
+            updateInteraction()
+        }
+    }
+
     private func updateInteraction() {
         let overlayActive = imageEditMode || geometryTool != nil
-        canvas.drawingGestureRecognizer.isEnabled = !imageEditMode
-        swipes.forEach { $0.isEnabled = !fingerDrawing && !aiMode && !overlayActive }
+        canvas.drawingGestureRecognizer.isEnabled = !imageEditMode && !isWriting
+        swipes.forEach { $0.isEnabled = !fingerDrawing && !aiMode && !overlayActive && !isWriting }
         imageTap?.isEnabled = !aiMode && geometryTool == nil
         pencilExitTap?.isEnabled = imageEditMode
     }
@@ -337,6 +350,63 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         paper.bounds = CGRect(origin: .zero, size: page.size)
         paper.transform = CGAffineTransform(scaleX: z, y: z)
         paper.center = CGPoint(x: size.width / 2, y: size.height / 2)
+        writingLayer.bounds = paper.bounds
+        writingLayer.transform = paper.transform
+        writingLayer.center = paper.center
+        if writingLayer.superview === canvas, canvas.subviews.last !== writingLayer {
+            canvas.bringSubviewToFront(writingLayer)
+        }
+    }
+
+    // MARK: Handschrift vorschreiben
+
+    /// Hängt fertige Striche an (wie selbst geschrieben, wird gespeichert).
+    func appendStrokes(_ strokes: [PKStroke]) {
+        guard !strokes.isEmpty else { return }
+        var drawing = canvas.drawing
+        drawing.strokes.append(contentsOf: strokes)
+        canvas.drawing = drawing
+        onDrawingChange?(drawing)
+    }
+
+    /// Ein einziger Rückgängig-Schritt für den ganzen geschriebenen Text.
+    func registerReplaceUndo(before: PKDrawing, after: PKDrawing) {
+        canvas.undoManager?.registerUndo(withTarget: self) { host in
+            MainActor.assumeIsolated {
+                host.canvas.drawing = before
+                host.onDrawingChange?(before)
+                host.registerReplaceUndo(before: after, after: before)
+            }
+        }
+    }
+
+    /// Scrollt mit, damit die Stiftspitze beim Schreiben sichtbar bleibt.
+    func follow(pagePoint: CGPoint) {
+        let z = canvas.zoomScale
+        let p = CGPoint(x: pagePoint.x * z, y: pagePoint.y * z)
+        var offset = canvas.contentOffset
+        let visibleTop = offset.y + insets.top + 40
+        let visibleBottom = offset.y + canvas.bounds.height - insets.bottom - 40
+        var target = offset
+        if p.y > visibleBottom || p.y < visibleTop {
+            target.y = p.y - canvas.bounds.height * 0.45
+        }
+        let visibleLeft = offset.x + 30
+        let visibleRight = offset.x + canvas.bounds.width - 30
+        if p.x > visibleRight || p.x < visibleLeft {
+            target.x = p.x - canvas.bounds.width * 0.5
+        }
+        let minY = -canvas.contentInset.top
+        let maxY = max(minY, canvas.contentSize.height - canvas.bounds.height + canvas.contentInset.bottom)
+        let minX = -canvas.contentInset.left
+        let maxX = max(minX, canvas.contentSize.width - canvas.bounds.width + canvas.contentInset.right)
+        target.x = min(max(target.x, minX), maxX)
+        target.y = min(max(target.y, minY), maxY)
+        guard target != offset else { return }
+        // Weich hinterhergleiten statt springen
+        offset.x += (target.x - offset.x) * 0.12
+        offset.y += (target.y - offset.y) * 0.12
+        canvas.contentOffset = offset
     }
 
     // MARK: Scrollen & Zeichnen
@@ -353,7 +423,7 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     /// Senkrechtes Blättern: über das Seitenende hinaus ziehen.
     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
                                    targetContentOffset: UnsafeMutablePointer<CGPoint>) {
-        guard flipDirection == .vertical, !aiMode, !imageEditMode, geometryTool == nil else { return }
+        guard flipDirection == .vertical, !aiMode, !imageEditMode, geometryTool == nil, !isWriting else { return }
         let y = scrollView.contentOffset.y
         let maxY = scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom
         if y > maxY + 90 {
@@ -364,7 +434,7 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     }
 
     @objc private func handleSwipe(_ swipe: UISwipeGestureRecognizer) {
-        guard flipDirection == .horizontal,
+        guard flipDirection == .horizontal, !isWriting,
               canvas.zoomScale <= widthFitScale + 0.01 else { return }
         onFlip?(swipe.direction == .left ? 1 : -1)
     }

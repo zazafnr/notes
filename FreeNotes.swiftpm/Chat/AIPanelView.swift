@@ -8,7 +8,8 @@ struct AIPanelView: View {
     @EnvironmentObject private var settings: AISettings
     var title: String
     var onClose: (() -> Void)? = nil
-    var onInsert: ((String) -> Void)? = nil
+    /// Antwort ins Heft übernehmen (Antwort, zugehörige Frage, Art).
+    var onInsert: ((ChatMessage, ChatMessage?, InsertMode) -> Void)? = nil
     var pageImage: (() -> UIImage?)? = nil
 
     @State private var input = ""
@@ -90,7 +91,7 @@ struct AIPanelView: View {
                         MessageRow(message: message,
                                    isLast: message.id == messages.last?.id,
                                    isStreaming: chat.isStreaming,
-                                   onInsert: onInsert,
+                                   onInsert: insertAction(for: message),
                                    onRegenerate: { chat.regenerate() })
                             .id(message.id)
                             .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
@@ -211,6 +212,18 @@ struct AIPanelView: View {
         }
     }
 
+    private func insertAction(for message: ChatMessage) -> ((InsertMode) -> Void)? {
+        guard let onInsert else { return nil }
+        let question = question(before: message.id)
+        return { mode in onInsert(message, question, mode) }
+    }
+
+    /// Die Frage, auf die eine Antwort gehört (letzte Nachricht des Nutzers davor).
+    private func question(before id: UUID) -> ChatMessage? {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return nil }
+        return messages[..<index].last { $0.role == .user }
+    }
+
     private var canSend: Bool {
         !input.trimmed.isEmpty || !attachments.isEmpty
     }
@@ -229,7 +242,7 @@ struct MessageRow: View {
     let message: ChatMessage
     let isLast: Bool
     let isStreaming: Bool
-    var onInsert: ((String) -> Void)?
+    var onInsert: ((InsertMode) -> Void)?
     var onRegenerate: () -> Void
 
     @State private var copied = false
@@ -302,8 +315,21 @@ struct MessageRow: View {
     private var actions: some View {
         HStack(spacing: 14) {
             if let onInsert {
-                Button { onInsert(message.text) } label: {
-                    Label("Auf Seite", systemImage: "square.and.arrow.down.on.square")
+                // Tippen: in Handschrift ins Heft; gedrückt halten: weitere Möglichkeiten
+                Menu {
+                    Button { onInsert(.handwriting) } label: {
+                        Label("In meiner Handschrift ins Heft", systemImage: "pencil.and.scribble")
+                    }
+                    Button { onInsert(.worksheet) } label: {
+                        Label("Auf dem Zettel eintragen", systemImage: "doc.text.viewfinder")
+                    }
+                    Button { onInsert(.card) } label: {
+                        Label("Als Karte einfügen", systemImage: "square.and.arrow.down.on.square")
+                    }
+                } label: {
+                    Label("Ins Heft", systemImage: "pencil.and.scribble")
+                } primaryAction: {
+                    onInsert(.handwriting)
                 }
             }
             Button {
@@ -330,6 +356,16 @@ struct MessageRow: View {
         .foregroundStyle(.secondary)
         .buttonStyle(.plain)
     }
+}
+
+/// Wie eine KI-Antwort ins Heft kommt.
+enum InsertMode {
+    /// Buchstabe für Buchstabe in der eigenen Handschrift.
+    case handwriting
+    /// In die Lücken des Arbeitsblatts auf der aktuellen Seite.
+    case worksheet
+    /// Als Bild-Karte (wie bisher).
+    case card
 }
 
 struct ThinkingDots: View {
