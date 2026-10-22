@@ -7,12 +7,20 @@ struct AIMessage: Sendable {
     var images: [String] = []
 }
 
+/// Ein Stück der Antwort: Text oder die verbrauchten Tokens (nur Claude, für das Budget).
+enum AIChunk: Sendable, Equatable {
+    case text(String)
+    case usage(input: Int, output: Int)
+}
+
 enum AIError: LocalizedError {
     case missingKey(String)
     case rateLimited(String)
     case invalidKey(String)
     case http(Int, String)
     case empty
+    case refused
+    case budgetExhausted
 
     var isRateLimit: Bool {
         if case .rateLimited = self { return true }
@@ -31,14 +39,22 @@ enum AIError: LocalizedError {
             return "Fehler \(code) vom KI-Anbieter.\n\n\(msg)"
         case .empty:
             return "Die KI hat keine Antwort geschickt. Versuch es noch einmal oder wähle ein anderes Modell."
+        case .refused:
+            return "Claude hat diese Anfrage abgelehnt. Formuliere sie anders oder frag OpenRouter."
+        case .budgetExhausted:
+            return "Das Claude-Budget für heute ist aufgebraucht und es ist kein kostenloser Anbieter eingerichtet. Trag in den Einstellungen einen OpenRouter-Key ein, dann geht es automatisch dort weiter."
         }
     }
 }
 
-/// Einfacher Client für OpenAI-kompatible Chat-Schnittstellen (Gemini, OpenRouter).
+/// Client für Claude (Messages API) und OpenAI-kompatible Schnittstellen (Gemini, OpenRouter).
 enum AIClient {
-    static func stream(messages: [AIMessage], config: AIConfig) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
+    /// `effort`: wie gründlich Claude nachdenkt (low/medium/high); die anderen Anbieter ignorieren es.
+    static func stream(messages: [AIMessage], config: AIConfig, effort: String = "medium") -> AsyncThrowingStream<AIChunk, Error> {
+        if config.provider == .claude {
+            return streamClaude(messages: messages, config: config, effort: effort)
+        }
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let request = try makeRequest(messages: messages, config: config)
@@ -55,7 +71,7 @@ enum AIClient {
                     lines: for try await line in bytes.lines {
                         if Task.isCancelled { break }
                         switch parseEvent(line) {
-                        case .text(let content): continuation.yield(content)
+                        case .text(let content): continuation.yield(.text(content))
                         case .done: break lines
                         case .error(let payload): throw makeError(status: 500, body: payload)
                         case nil: continue
@@ -63,6 +79,55 @@ enum AIClient {
                     }
                     continuation.finish()
                 } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private static func streamClaude(messages: [AIMessage], config: AIConfig, effort: String) -> AsyncThrowingStream<AIChunk, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                var input = 0
+                var output = 0
+                // Verbrauchte Tokens immer melden, auch bei Abbruch, damit das Budget stimmt.
+                func reportUsage() {
+                    if input > 0 || output > 0 { continuation.yield(.usage(input: input, output: output)) }
+                    input = 0
+                    output = 0
+                }
+                do {
+                    let request = try ClaudeClient.makeRequest(messages: messages, config: config, effort: effort)
+                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    if status != 200 {
+                        var body = ""
+                        for try await line in bytes.lines {
+                            body += line + "\n"
+                            if body.count > 4000 { break }
+                        }
+                        throw makeError(status: status, body: body)
+                    }
+                    var stopReason: String?
+                    for try await line in bytes.lines {
+                        if Task.isCancelled { break }
+                        for event in ClaudeClient.parseEvents(line) {
+                            switch event {
+                            case .text(let text): continuation.yield(.text(text))
+                            case .usage(let i, let o):
+                                if let i { input = max(input, i) }
+                                if let o { output = max(output, o) }
+                            case .stop(let reason): stopReason = reason
+                            case .error(let payload): throw makeError(status: 500, body: payload)
+                            }
+                        }
+                    }
+                    reportUsage()
+                    if stopReason == "refusal" { throw AIError.refused }
+                    continuation.finish()
+                } catch {
+                    reportUsage()
                     continuation.finish(throwing: error)
                 }
             }
@@ -123,10 +188,11 @@ enum AIClient {
     static func makeError(status: Int, body: String) -> AIError {
         let message = errorMessage(from: body)
         switch status {
-        case 429: return .rateLimited(message)
+        case 429, 529: return .rateLimited(message)
         case 401, 403: return .invalidKey(message)
         default:
-            if message.localizedCaseInsensitiveContains("rate limit") || message.localizedCaseInsensitiveContains("quota") {
+            if message.localizedCaseInsensitiveContains("rate limit") || message.localizedCaseInsensitiveContains("quota")
+                || message.localizedCaseInsensitiveContains("credit balance") || message.localizedCaseInsensitiveContains("overloaded") {
                 return .rateLimited(message)
             }
             return .http(status, message)
@@ -150,6 +216,7 @@ enum AIClient {
 
     /// Lädt die Modellliste. Bei OpenRouter nur kostenlose Modelle.
     static func fetchModels(config: AIConfig) async throws -> [String] {
+        if config.provider == .claude { return try await ClaudeClient.fetchModels(config: config) }
         var request = URLRequest(url: config.provider.baseURL.appendingPathComponent("models"))
         request.setValue("Bearer \(config.key)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -162,6 +229,8 @@ enum AIClient {
             guard var id = entry["id"] as? String else { continue }
             if id.hasPrefix("models/") { id = String(id.dropFirst(7)) }
             switch config.provider {
+            case .claude:
+                break
             case .gemini:
                 guard id.contains("gemini"), !id.contains("embedding"), !id.contains("tts"), !id.contains("image") else { continue }
             case .openrouter:

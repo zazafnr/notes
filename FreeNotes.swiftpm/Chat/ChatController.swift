@@ -71,15 +71,25 @@ final class ChatController: ObservableObject {
 
     private func stream(history: [AIMessage], replyID: UUID) async {
         let providers = settings.providerOrder
+        // Mit Bild gründlicher nachdenken (Aufgaben lösen), reine Chat-Fragen sparsam.
+        let effort = history.contains { !$0.images.isEmpty } ? "medium" : "low"
+        let budgetNote = settings.claudeSkippedForBudget ? "Claude-Tagesbudget aufgebraucht · " : ""
         var lastError: Error?
+        if providers.isEmpty { lastError = AIError.budgetExhausted }
         for (index, provider) in providers.enumerated() {
             do {
                 let config = try settings.config(for: provider)
                 activeModel = config.model
+                let meta = budgetNote + "\(provider.title) · \(config.model)"
                 var text = ""
-                for try await chunk in AIClient.stream(messages: history, config: config) {
-                    text += chunk
-                    update(replyID) { $0.text = text; $0.meta = "\(provider.title) · \(config.model)" }
+                for try await chunk in AIClient.stream(messages: history, config: config, effort: effort) {
+                    switch chunk {
+                    case .text(let piece):
+                        text += piece
+                        update(replyID) { $0.text = text; $0.meta = meta }
+                    case .usage(let input, let output):
+                        settings.recordClaudeUsage(model: config.model, inputTokens: input, outputTokens: output)
+                    }
                 }
                 if Task.isCancelled { return }
                 if text.trimmed.isEmpty { throw AIError.empty }
@@ -87,14 +97,13 @@ final class ChatController: ObservableObject {
                 return
             } catch is CancellationError {
                 return
-            } catch let error as AIError where error.isRateLimit && index < providers.count - 1 {
-                lastError = error
-                update(replyID) { $0.text = ""; $0.meta = "Limit erreicht, wechsle zu \(providers[index + 1].title) …" }
-                continue
             } catch {
                 if Task.isCancelled { return }
                 lastError = error
-                break
+                // Bei jedem Fehler (Limit, Budget, Ablehnung, Netz) den nächsten Anbieter versuchen.
+                guard index < providers.count - 1 else { break }
+                let next = providers[index + 1].title
+                update(replyID) { $0.text = ""; $0.meta = "\(provider.title) geht gerade nicht, wechsle zu \(next) …" }
             }
         }
         let message = (lastError as? LocalizedError)?.errorDescription ?? lastError?.localizedDescription ?? "Unbekannter Fehler"

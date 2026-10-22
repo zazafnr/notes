@@ -6,6 +6,7 @@ struct OnboardingView: View {
 
     @State private var step = 0
     @State private var key = ""
+    @State private var openRouterKey = ""
     @State private var glow = false
 
     var body: some View {
@@ -25,7 +26,7 @@ struct OnboardingView: View {
                     finish()
                 }
             } label: {
-                Text(step < 2 ? "Weiter" : (key.trimmed.isEmpty ? "Später einrichten" : "Los geht's"))
+                Text(step < 2 ? "Weiter" : (key.trimmed.isEmpty && openRouterKey.trimmed.isEmpty ? "Später einrichten" : "Los geht's"))
                     .font(.headline)
                     .foregroundStyle(.white)
                     .frame(maxWidth: 360)
@@ -95,42 +96,74 @@ struct OnboardingView: View {
     }
 
     private var keySetup: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "key.horizontal.fill")
-                .font(.system(size: 54))
-                .foregroundStyle(Theme.aiGradient)
-                .symbolEffect(.bounce, value: step)
-            Text("Kostenlosen KI-Key eintragen")
-                .font(.largeTitle.weight(.bold))
-                .multilineTextAlignment(.center)
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Öffne aistudio.google.com/apikey und melde dich mit Google an.", systemImage: "1.circle.fill")
-                Label("Tippe auf »API-Schlüssel erstellen« und kopiere ihn.", systemImage: "2.circle.fill")
-                Label("Füge ihn hier ein. Fertig!", systemImage: "3.circle.fill")
+        ScrollView {
+            VStack(spacing: 18) {
+                Image(systemName: "key.horizontal.fill")
+                    .font(.system(size: 54))
+                    .foregroundStyle(Theme.aiGradient)
+                    .symbolEffect(.bounce, value: step)
+                Text("KI einrichten")
+                    .font(.largeTitle.weight(.bold))
+                Text("Claude antwortet, solange dein Tagesbudget reicht. Danach übernimmt OpenRouter kostenlos.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 520)
+
+                keyCard(title: "Claude-Key", badge: "ca. 5 $ im Monat",
+                        hint: "console.anthropic.com → API Keys → Create Key. Vorher Guthaben aufladen (z. B. 5 $).",
+                        provider: .claude, text: $key)
+                keyCard(title: "OpenRouter-Key", badge: "kostenlos",
+                        hint: "openrouter.ai → Anmelden → Keys → Create Key.",
+                        provider: .openrouter, text: $openRouterKey)
+
+                Text("Du kannst auch nur einen der beiden eintragen. Google Gemini gibt es zusätzlich in den Einstellungen.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
-            .font(.body)
-            .frame(maxWidth: 480, alignment: .leading)
-            Link(destination: AIProviderKind.gemini.keyHelpURL) {
-                Label("Google AI Studio öffnen", systemImage: "safari")
+            .padding(30)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func keyCard(title: String, badge: String, hint: String, provider: AIProviderKind, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(title).font(.headline)
+                Text(badge)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Theme.accent.opacity(0.12), in: Capsule())
+                    .foregroundStyle(Theme.accent)
+                Spacer()
+                Link(destination: provider.keyHelpURL) {
+                    Label("Öffnen", systemImage: "safari")
+                        .font(.subheadline)
+                }
             }
-            SecureField("Gemini-API-Key einfügen", text: $key)
+            Text(hint).font(.footnote).foregroundStyle(.secondary)
+            SecureField("Key einfügen", text: text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .padding(14)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .frame(maxWidth: 480)
-            Text("Später kannst du in den Einstellungen auch OpenRouter hinzufügen.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                .padding(12)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .padding(30)
+        .padding(16)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(maxWidth: 520)
     }
 
     private func finish() {
+        if !key.trimmed.isEmpty { settings.setKey(key, for: .claude) }
+        if !openRouterKey.trimmed.isEmpty { settings.setKey(openRouterKey, for: .openrouter) }
         if !key.trimmed.isEmpty {
-            settings.setKey(key, for: .gemini)
-            settings.provider = .gemini
+            settings.provider = .claude
+        } else if !openRouterKey.trimmed.isEmpty {
+            settings.provider = .openrouter
         }
+        settings.autoFallback = true
         settings.hasOnboarded = true
         Haptics.success()
         dismiss()
