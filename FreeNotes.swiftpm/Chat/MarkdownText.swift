@@ -11,6 +11,7 @@ struct MarkdownText: View {
         case code(String)
         case paragraph(String)
         case divider
+        case table([[String]])
     }
 
     var body: some View {
@@ -49,7 +50,45 @@ struct MarkdownText: View {
             inline(s)
         case .divider:
             Divider()
+        case .table(let rows):
+            tableView(rows)
         }
+    }
+
+    /// Markdown-Tabelle als Raster; erste Zeile fett als Kopf.
+    private func tableView(_ rows: [[String]]) -> some View {
+        let columns = rows.map(\.count).max() ?? 0
+        return ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { r, row in
+                    GridRow {
+                        ForEach(0..<columns, id: \.self) { c in
+                            inline(c < row.count ? row[c] : "")
+                                .fontWeight(r == 0 ? .semibold : .regular)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(r == 0 ? Color.primary.opacity(0.07) : (r % 2 == 0 ? Color.primary.opacity(0.03) : Color.clear))
+                                .overlay(Rectangle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+                        }
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+        }
+    }
+
+    /// Zerlegt »| a | b |« in Zellen.
+    private static func cells(_ line: String) -> [String] {
+        var inner = line.trimmed
+        if inner.hasPrefix("|") { inner.removeFirst() }
+        if inner.hasSuffix("|") { inner.removeLast() }
+        return inner.components(separatedBy: "|").map { $0.trimmed }
+    }
+
+    private static func isSeparatorRow(_ cells: [String]) -> Bool {
+        !cells.isEmpty && cells.allSatisfy { cell in !cell.isEmpty && cell.allSatisfy { "-:".contains($0) } }
     }
 
     private func inline(_ s: String) -> Text {
@@ -64,8 +103,19 @@ struct MarkdownText: View {
         var result: [Block] = []
         var code: [String]?
         let cleaned = LatexLite.clean(text)
+        var table: [[String]] = []
+        func flushTable() {
+            if !table.isEmpty { result.append(.table(table)) }
+            table = []
+        }
         for rawLine in cleaned.components(separatedBy: "\n") {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if code == nil, line.hasPrefix("|") {
+                let row = Self.cells(line)
+                if !Self.isSeparatorRow(row) { table.append(row) }
+                continue
+            }
+            flushTable()
             if line.hasPrefix("```") {
                 if let c = code {
                     result.append(.code(c.joined(separator: "\n")))
@@ -94,6 +144,7 @@ struct MarkdownText: View {
                 result.append(.paragraph(line))
             }
         }
+        flushTable()
         if let c = code { result.append(.code(c.joined(separator: "\n"))) }
         return result
     }

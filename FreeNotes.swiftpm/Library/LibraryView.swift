@@ -19,7 +19,6 @@ struct LibraryView: View {
     @State private var showSettings = false
     @State private var showOnboarding = false
     @State private var pendingOpen: UUID?
-    @Namespace private var zoom
 
     var body: some View {
         NavigationSplitView {
@@ -29,7 +28,7 @@ struct LibraryView: View {
             case .chat:
                 GeneralChatView(store: store, settings: settings)
             case let item:
-                NotebookGridView(filter: item, zoom: zoom,
+                NotebookGridView(filter: item,
                                  onOpen: { openNotebook = OpenNotebook(id: $0) },
                                  onNew: { showNewNotebook = true })
             }
@@ -38,7 +37,8 @@ struct LibraryView: View {
             NotebookEditorView(notebookID: item.id, store: store, settings: settings)
                 .environmentObject(store)
                 .environmentObject(settings)
-                .modifier(ZoomDestination(id: item.id, namespace: zoom))
+                // Kein Zoom-Übergang: dessen Wisch-Geste hat das Heft beim Schreiben versehentlich geschlossen.
+                .interactiveDismissDisabled()
         }
         .sheet(isPresented: $showNewNotebook, onDismiss: {
             if let id = pendingOpen {
@@ -138,7 +138,6 @@ struct SubjectSheetItem: Identifiable {
 struct NotebookGridView: View {
     @EnvironmentObject private var store: LibraryStore
     let filter: SidebarItem
-    let zoom: Namespace.ID
     var onOpen: (UUID) -> Void
     var onNew: () -> Void
 
@@ -190,7 +189,6 @@ struct NotebookGridView: View {
                         NotebookCoverView(notebook: nb, subject: store.subject(nb.subjectID),
                                           thumb: store.thumbnail(notebook: nb.id), version: store.thumbVersion,
                                           match: contentMatch(nb))
-                            .modifier(ZoomSource(id: nb.id, namespace: zoom))
                     }
                     .buttonStyle(PressableStyle())
                     .hoverEffect(.lift)

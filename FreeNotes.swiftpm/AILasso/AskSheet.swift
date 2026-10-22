@@ -3,12 +3,15 @@ import SwiftUI
 /// Erscheint nach dem Einkreisen: Vorschau, Schnellaktionen und eigene Frage.
 struct AskSheet: View {
     let snapshot: LassoSnapshot
+    var isLatin = false
     var onSend: (_ display: String, _ prompt: String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var question = ""
     @State private var appeared = false
     @FocusState private var focused: Bool
+    /// Die Tastatur erscheint erst, wenn man ins Feld tippt.
+    @State private var editing = false
 
     var body: some View {
         NavigationStack {
@@ -28,7 +31,7 @@ struct AskSheet: View {
                         .opacity(appeared ? 1 : 0)
 
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
-                        ForEach(Array(QuickAction.allCases.enumerated()), id: \.element.id) { index, action in
+                        ForEach(Array(QuickAction.available(latin: isLatin).enumerated()), id: \.element.id) { index, action in
                             Button {
                                 let extra = question.trimmed
                                 let prompt = extra.isEmpty ? action.prompt : action.prompt + "\nZusätzlich: " + extra
@@ -37,9 +40,13 @@ struct AskSheet: View {
                             } label: {
                                 Label(action.title, systemImage: action.symbol)
                                     .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
+                                    .multilineTextAlignment(.center)
+                                    .frame(maxWidth: .infinity, minHeight: 22)
                                     .padding(.vertical, 13)
-                                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .padding(.horizontal, 8)
+                                    .foregroundStyle(action.isProminent ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                                    .background(action.isProminent ? AnyShapeStyle(Theme.aiGradient) : AnyShapeStyle(Color.primary.opacity(0.06)),
+                                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             }
                             .buttonStyle(PressableStyle())
                             .offset(y: appeared ? 0 : 16)
@@ -49,12 +56,27 @@ struct AskSheet: View {
                     }
 
                     HStack(spacing: 10) {
-                        TextField("Oder frag etwas: „Was bedeutet …?“", text: $question, axis: .vertical)
-                            .lineLimit(1...4)
-                            .focused($focused)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 11)
-                            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        Group {
+                            if editing {
+                                TextField("Oder frag etwas: „Was bedeutet …?“", text: $question, axis: .vertical)
+                                    .lineLimit(1...4)
+                                    .focused($focused)
+                            } else {
+                                Button {
+                                    editing = true
+                                    Task { @MainActor in focused = true }
+                                } label: {
+                                    Text("Oder frag etwas: „Was bedeutet …?“")
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 11)
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         Button {
                             send(display: question.trimmed, prompt: question.trimmed)
                         } label: {
@@ -64,7 +86,7 @@ struct AskSheet: View {
                         }
                         .disabled(question.trimmed.isEmpty)
                     }
-                    Text("Tipp: Du kannst mit dem Pencil direkt ins Feld schreiben.")
+                    Text("Tipp: Tippe ins Feld, um eine eigene Frage zu stellen; mit dem Pencil kannst du direkt hineinschreiben.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

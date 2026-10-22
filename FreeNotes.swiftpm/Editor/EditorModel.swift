@@ -13,7 +13,7 @@ struct LassoSnapshot: Identifiable {
 final class EditorModel: ObservableObject {
     let notebookID: UUID
     let store: LibraryStore
-    let toolPicker = PKToolPicker()
+    let ink = InkSettings()
 
     @Published var pageIndex = 0
     @Published var aiMode = false
@@ -22,13 +22,13 @@ final class EditorModel: ObservableObject {
     @Published var geometryTool: GeometryTool?
     @Published var rulerActive = false
     @Published var wholePage = false
+    @Published var showBook = false
     @Published var snapshot: LassoSnapshot?
 
     weak var host: PageCanvasHost?
     private var lastLassoRect: CGRect?
     private var pending: (page: UUID, drawing: PKDrawing)?
     private var saveTask: Task<Void, Never>?
-    private var toolBeforeEraser: PKTool?
     private var isClosed = false
 
     init(notebookID: UUID, store: LibraryStore) {
@@ -282,6 +282,11 @@ final class EditorModel: ObservableObject {
         toggleImageEditMode()
     }
 
+    func stopImageEditing() {
+        guard imageEditMode else { return }
+        toggleImageEditMode()
+    }
+
     // MARK: Lineal, Zirkel, Strecke
 
     func toggleGeometry(_ tool: GeometryTool) {
@@ -299,6 +304,26 @@ final class EditorModel: ObservableObject {
     func toggleWholePage() {
         wholePage.toggle()
         Haptics.tap()
+    }
+
+    // MARK: Buch daneben
+
+    func toggleBook() {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) { showBook.toggle() }
+        Haptics.tap()
+    }
+
+    /// Speichert die Buch-Adresse für dieses Heft (nil = Zuordnung entfernen).
+    func assignBook(_ stored: String?) {
+        store.updateNotebook(notebookID) { $0.bookURL = stored }
+        Haptics.success()
+    }
+
+    /// Ausschnitt aus dem Buch an die KI (öffnet das Frage-Fenster).
+    func ask(about image: UIImage) {
+        lastLassoRect = nil
+        Haptics.success()
+        snapshot = LassoSnapshot(image: image, rect: .zero)
     }
 
     func toggleRuler() {
@@ -325,12 +350,7 @@ final class EditorModel: ObservableObject {
         case .ai:
             toggleAIMode()
         case .eraser:
-            if toolPicker.selectedTool is PKEraserTool {
-                toolPicker.selectedTool = toolBeforeEraser ?? PKInkingTool(.pen, color: .black, width: 4)
-            } else {
-                toolBeforeEraser = toolPicker.selectedTool
-                toolPicker.selectedTool = PKEraserTool(.vector)
-            }
+            ink.toggleEraser()
             Haptics.tap()
         }
     }

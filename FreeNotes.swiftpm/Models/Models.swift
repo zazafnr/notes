@@ -105,6 +105,8 @@ struct Notebook: Codable, Identifiable, Equatable {
     var lastPage: Int? = nil
     /// Per Texterkennung gelesene Handschrift und Scans, für die Suche.
     var searchText: String? = nil
+    /// Zugeordnetes Buch (z. B. Link zu digi4school), öffnet sich neben dem Heft.
+    var bookURL: String? = nil
 }
 
 struct LibraryData: Codable {

@@ -119,7 +119,6 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     let lasso = LassoOverlayView()
     private(set) var page: Page
 
-    var toolPicker: PKToolPicker?
     var flipDirection: FlipDirection = .horizontal
     var onDrawingChange: ((PKDrawing) -> Void)?
     var onLasso: ((CGRect, PKDrawing) -> Void)?
@@ -127,6 +126,7 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     var onItemsChange: (([PageImageItem]) -> Void)?
     var onFlip: ((Int) -> Void)?
     var onImageTap: (() -> Void)?
+    var onEmptyTap: (() -> Void)?
 
     private var didInitialLayout = false
     /// Platz für die Werkzeugleiste oben und zum Weiterscrollen unten; seitlich kein Rand.
@@ -135,6 +135,7 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     private var fitsWholePage = false
     private var swipes: [UISwipeGestureRecognizer] = []
     private var imageTap: UITapGestureRecognizer?
+    private var pencilExitTap: UITapGestureRecognizer?
 
     var aiMode = false {
         didSet {
@@ -225,6 +226,15 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         tap.delegate = self
         canvas.addGestureRecognizer(tap)
         imageTap = tap
+
+        // Im Bild-Modus beendet auch ein Pencil-Tipp neben die Bilder die Bearbeitung
+        let pencilTap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        pencilTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        pencilTap.cancelsTouchesInView = false
+        pencilTap.delegate = self
+        pencilTap.isEnabled = false
+        canvas.addGestureRecognizer(pencilTap)
+        pencilExitTap = pencilTap
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -248,7 +258,8 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         let overlayActive = imageEditMode || geometryTool != nil
         canvas.drawingGestureRecognizer.isEnabled = !imageEditMode
         swipes.forEach { $0.isEnabled = !fingerDrawing && !aiMode && !overlayActive }
-        imageTap?.isEnabled = !aiMode && !overlayActive
+        imageTap?.isEnabled = !aiMode && geometryTool == nil
+        pencilExitTap?.isEnabled = imageEditMode
     }
 
     override func layoutSubviews() {
@@ -328,20 +339,6 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         paper.center = CGPoint(x: size.width / 2, y: size.height / 2)
     }
 
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        guard window != nil, let picker = toolPicker else { return }
-        picker.addObserver(canvas)
-        picker.setVisible(true, forFirstResponder: canvas)
-        Task { [weak self] in
-            self?.canvas.becomeFirstResponder()
-        }
-    }
-
-    func detachToolPicker() {
-        toolPicker?.removeObserver(canvas)
-    }
-
     // MARK: Scrollen & Zeichnen
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
@@ -376,6 +373,9 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
         let point = tap.location(in: paper)
         if page.items.contains(where: { $0.contains(point) }) {
             onImageTap?()
+        } else if imageEditMode {
+            // Daneben getippt: Bearbeiten beenden
+            onEmptyTap?()
         }
     }
 
@@ -938,6 +938,7 @@ final class ImageHandleView: UIView, UIGestureRecognizerDelegate, UIContextMenuI
 
 struct PageCanvas: UIViewRepresentable {
     @ObservedObject var model: EditorModel
+    @ObservedObject var ink: InkSettings
     let store: LibraryStore
     let page: Page
     let fingerDrawing: Bool
@@ -952,18 +953,19 @@ struct PageCanvas: UIViewRepresentable {
             drawing: store.loadDrawing(notebook: notebookID, page: pageID),
             imageProvider: { [weak store] name in store?.image(name, notebook: notebookID) }
         )
-        host.toolPicker = model.toolPicker
         host.onDrawingChange = { [weak model] drawing in model?.drawingChanged(drawing, page: pageID) }
         host.onLasso = { [weak model] rect, drawing in model?.handleLasso(rect: rect, drawing: drawing, pageID: pageID) }
         host.onItemsChange = { [weak model] items in model?.setItems(items, pageID: pageID) }
         host.onFlip = { [weak model] delta in model?.flip(delta) }
         host.onImageTap = { [weak model] in model?.startImageEditing() }
+        host.onEmptyTap = { [weak model] in model?.stopImageEditing() }
         model.host = host
         return host
     }
 
     func updateUIView(_ host: PageCanvasHost, context: Context) {
         host.update(page: page)
+        host.canvas.tool = ink.pkTool
         host.aiMode = model.aiMode
         host.imageEditMode = model.imageEditMode
         host.geometryTool = model.geometryTool
@@ -976,7 +978,4 @@ struct PageCanvas: UIViewRepresentable {
         if model.host !== host { model.host = host }
     }
 
-    static func dismantleUIView(_ host: PageCanvasHost, coordinator: ()) {
-        host.detachToolPicker()
-    }
 }

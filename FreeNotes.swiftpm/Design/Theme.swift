@@ -70,36 +70,6 @@ struct GlassBackground: ViewModifier {
     }
 }
 
-// MARK: - Zoom-Übergang vom Heft-Cover in den Editor (ab iOS 18)
-
-struct ZoomSource: ViewModifier {
-    let id: UUID
-    let namespace: Namespace.ID
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.matchedTransitionSource(id: id, in: namespace)
-        } else {
-            content
-        }
-    }
-}
-
-struct ZoomDestination: ViewModifier {
-    let id: UUID
-    let namespace: Namespace.ID
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.navigationTransition(.zoom(sourceID: id, in: namespace))
-        } else {
-            content
-        }
-    }
-}
-
 extension View {
     func glass(cornerRadius: CGFloat = 18) -> some View {
         modifier(GlassBackground(cornerRadius: cornerRadius))

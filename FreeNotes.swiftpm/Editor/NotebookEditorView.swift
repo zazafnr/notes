@@ -20,6 +20,7 @@ struct NotebookEditorView: View {
     @State private var showPages = false
     @State private var confirmDelete = false
     @State private var shareURL: ShareItem?
+    @State private var totalWidth: CGFloat = 1000
 
     init(notebookID: UUID, store: LibraryStore, settings: AISettings) {
         _model = StateObject(wrappedValue: EditorModel(notebookID: notebookID, store: store))
@@ -34,7 +35,7 @@ struct NotebookEditorView: View {
             Color(uiColor: .systemGray5).ignoresSafeArea()
 
             if let page = model.currentPage {
-                PageCanvas(model: model, store: store, page: page, fingerDrawing: settings.fingerDrawing,
+                PageCanvas(model: model, ink: model.ink, store: store, page: page, fingerDrawing: settings.fingerDrawing,
                            flipDirection: settings.flipDirection, pencilAction: settings.pencilAction)
                     .id(page.id)
                     .ignoresSafeArea(edges: .bottom)
@@ -79,6 +80,24 @@ struct NotebookEditorView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.aiMode)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.imageEditMode)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.geometryTool)
+        .padding(.leading, model.showBook ? bookWidth : 0)
+        .overlay(alignment: .leading) {
+            if model.showBook {
+                HStack(spacing: 0) {
+                    BookPanel(model: model)
+                    Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1)
+                }
+                .frame(width: bookWidth)
+                .transition(.move(edge: .leading))
+            }
+        }
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { totalWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, w in totalWidth = w }
+            }
+        }
         .onDrop(of: [.image], isTargeted: nil) { providers in
             let model = model
             var accepted = false
@@ -92,7 +111,8 @@ struct NotebookEditorView: View {
             return accepted
         }
         .sheet(item: $model.snapshot) { snap in
-            AskSheet(snapshot: snap) { display, prompt in
+            AskSheet(snapshot: snap,
+                     isLatin: QuickAction.isLatin([model.notebook?.title, store.subject(model.notebook?.subjectID)?.name])) { display, prompt in
                 chat.send(display: display, prompt: prompt, images: [snap.image])
                 model.aiMode = false
                 model.showPanel = true
@@ -148,14 +168,47 @@ struct NotebookEditorView: View {
 
     // MARK: Werkzeugleiste
 
-    private var topBar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 4) {
-                Button {
-                    model.close()
-                    dismiss()
-                } label: { ToolbarIcon(symbol: "chevron.left") }
+    /// Buch und Heft teilen sich den Bildschirm 50/50.
+    private var bookWidth: CGFloat { max(totalWidth / 2, 320) }
 
+    /// Passt sich der Breite an: mit Titel, ohne Titel oder in zwei Reihen.
+    private var topBar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                backPill(showTitle: true)
+                Spacer(minLength: 0)
+                toolsPill(compact: false)
+                pageControls(compact: false)
+                actionsPill
+            }
+            HStack(spacing: 10) {
+                backPill(showTitle: false)
+                Spacer(minLength: 0)
+                toolsPill(compact: false)
+                pageControls(compact: true)
+                actionsPill
+            }
+            VStack(spacing: 8) {
+                HStack(spacing: 10) {
+                    backPill(showTitle: true)
+                    Spacer(minLength: 0)
+                    pageControls(compact: true)
+                    actionsPill
+                }
+                toolsPill(compact: false)
+            }
+        }
+        .buttonStyle(PressableStyle())
+    }
+
+    private func backPill(showTitle: Bool) -> some View {
+        HStack(spacing: 4) {
+            Button {
+                model.close()
+                dismiss()
+            } label: { ToolbarIcon(symbol: "chevron.left") }
+
+            if showTitle {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(model.notebook?.title ?? "")
                         .font(.headline)
@@ -166,64 +219,76 @@ struct NotebookEditorView: View {
                             .foregroundStyle(Theme.color(subject.colorIndex))
                     }
                 }
+                .frame(maxWidth: 180, alignment: .leading)
                 .padding(.trailing, 10)
             }
-            .padding(4)
-            .glass(cornerRadius: 24)
-
-            Spacer(minLength: 0)
-
-            HStack(spacing: 2) {
-                Button { model.undo() } label: { ToolbarIcon(symbol: "arrow.uturn.backward") }
-                Button { model.redo() } label: { ToolbarIcon(symbol: "arrow.uturn.forward") }
-            }
-            .padding(4)
-            .glass(cornerRadius: 24)
-
-            pageControls
-
-            HStack(spacing: 2) {
-                insertMenu
-
-                Button { model.toggleAIMode() } label: {
-                    ToolbarIcon(symbol: "sparkles", active: model.aiMode, gradient: true)
-                        .symbolEffect(.bounce, value: model.aiMode)
-                }
-                .help("KI-Kreis: Aufgabe einkreisen")
-
-                Button { model.showPanel.toggle() } label: {
-                    ToolbarIcon(symbol: "bubble.left.and.text.bubble.right", active: model.showPanel)
-                }
-
-                Menu {
-                    Button {
-                        if let url = model.exportPDF() { shareURL = ShareItem(url: url) }
-                    } label: { Label("Als PDF teilen", systemImage: "square.and.arrow.up") }
-                    Button(role: .destructive) { confirmDelete = true } label: {
-                        Label("Seite löschen", systemImage: "trash")
-                    }
-                    .disabled((model.notebook?.pages.count ?? 0) < 2)
-                } label: { ToolbarIcon(symbol: "ellipsis.circle") }
-            }
-            .padding(4)
-            .glass(cornerRadius: 24)
         }
-        .buttonStyle(PressableStyle())
+        .padding(4)
+        .glass(cornerRadius: 24)
     }
 
-    private var pageControls: some View {
+    /// Rückgängig, Stifte, Farbe (ersetzt Apples Werkzeugleiste unten).
+    private func toolsPill(compact: Bool) -> some View {
+        HStack(spacing: 2) {
+            Button { model.undo() } label: { ToolbarIcon(symbol: "arrow.uturn.backward") }
+            Button { model.redo() } label: { ToolbarIcon(symbol: "arrow.uturn.forward") }
+            Divider().frame(height: 24).padding(.horizontal, 4)
+            InkToolbar(ink: model.ink, compact: compact)
+        }
+        .padding(4)
+        .glass(cornerRadius: 24)
+    }
+
+    private var actionsPill: some View {
+        HStack(spacing: 2) {
+            insertMenu
+
+            Button { model.toggleAIMode() } label: {
+                ToolbarIcon(symbol: "sparkles", active: model.aiMode, gradient: true)
+                    .symbolEffect(.bounce, value: model.aiMode)
+            }
+            .help("KI-Kreis: Aufgabe einkreisen")
+
+            Button { model.showPanel.toggle() } label: {
+                ToolbarIcon(symbol: "bubble.left.and.text.bubble.right", active: model.showPanel)
+            }
+
+            Button { model.toggleBook() } label: {
+                ToolbarIcon(symbol: "book", active: model.showBook)
+            }
+            .help("Buch daneben öffnen")
+
+            Menu {
+                Button {
+                    if let url = model.exportPDF() { shareURL = ShareItem(url: url) }
+                } label: { Label("Als PDF teilen", systemImage: "square.and.arrow.up") }
+                Button(role: .destructive) { confirmDelete = true } label: {
+                    Label("Seite löschen", systemImage: "trash")
+                }
+                .disabled((model.notebook?.pages.count ?? 0) < 2)
+            } label: { ToolbarIcon(symbol: "ellipsis.circle") }
+        }
+        .padding(4)
+        .glass(cornerRadius: 24)
+    }
+
+    private func pageControls(compact: Bool) -> some View {
         let count = model.notebook?.pages.count ?? 0
         return HStack(spacing: 2) {
-            Button { model.goTo(model.pageIndex - 1) } label: { ToolbarIcon(symbol: "chevron.up") }
-                .disabled(model.pageIndex == 0)
+            if !compact {
+                Button { model.goTo(model.pageIndex - 1) } label: { ToolbarIcon(symbol: "chevron.up") }
+                    .disabled(model.pageIndex == 0)
+            }
             Button { showPages = true } label: {
                 Text("\(model.pageIndex + 1) / \(count)")
                     .font(.subheadline.monospacedDigit().weight(.semibold))
                     .contentTransition(.numericText())
-                    .frame(minWidth: 52, minHeight: 40)
+                    .frame(minWidth: compact ? 44 : 52, minHeight: 40)
             }
-            Button { model.goTo(model.pageIndex + 1) } label: { ToolbarIcon(symbol: "chevron.down") }
-                .disabled(model.pageIndex >= count - 1)
+            if !compact {
+                Button { model.goTo(model.pageIndex + 1) } label: { ToolbarIcon(symbol: "chevron.down") }
+                    .disabled(model.pageIndex >= count - 1)
+            }
             Button { model.toggleWholePage() } label: {
                 ToolbarIcon(symbol: model.wholePage ? "arrow.left.and.right.square" : "rectangle.portrait.arrowtriangle.2.inward")
             }
@@ -298,7 +363,7 @@ struct NotebookEditorView: View {
     private var imageHint: some View {
         HStack(spacing: 10) {
             Image(systemName: "hand.draw")
-            Text("Ziehen zum Verschieben, mit zwei Fingern zoomen/drehen, Punkte zum Skalieren/Drehen, lange drücken für mehr")
+            Text("Ziehen, mit zwei Fingern zoomen/drehen, lange drücken für mehr · daneben tippen zum Beenden")
                 .lineLimit(2)
                 .font(.subheadline.weight(.medium))
             Button("Fertig") { model.toggleImageEditMode() }
