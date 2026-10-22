@@ -57,7 +57,7 @@ struct LibraryView: View {
         .sheet(isPresented: $showSettings, onDismiss: {
             if !settings.hasOnboarded { showOnboarding = true }
         }) {
-            SettingsView().environmentObject(settings)
+            SettingsView().environmentObject(settings).environmentObject(store)
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView().environmentObject(settings)

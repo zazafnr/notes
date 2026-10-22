@@ -50,6 +50,16 @@ final class LibraryStore: ObservableObject {
 
     // MARK: Laden & Speichern
 
+    /// Nach dem Wiederherstellen einer Sicherung alles neu einlesen.
+    func reload() {
+        subjects = []
+        notebooks = []
+        threads = []
+        imageCache.removeAllObjects()
+        load()
+        thumbVersion += 1
+    }
+
     private func load() {
         let decoder = JSONDecoder()
         if let data = try? Data(contentsOf: libraryURL),

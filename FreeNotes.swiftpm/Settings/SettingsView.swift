@@ -42,6 +42,8 @@ struct SettingsView: View {
                     Text("Doppeltippen (Pencil 2) oder Drücken (Pencil Pro) löst die gewählte Aktion aus. Blättern: mit einem Finger seitlich wischen oder über das Seitenende hinaus ziehen.")
                 }
 
+                BackupSection()
+
                 Section {
                     Button("Einführung erneut zeigen") {
                         settings.hasOnboarded = false
