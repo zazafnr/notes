@@ -98,10 +98,16 @@ final class HandwritingStore: ObservableObject {
     }
 
     /// Alle Zeichen, die man selbst schreiben kann (in Gruppen für die Übersicht).
-    static let trainingGroups: [(title: String, characters: [String])] = [
-        ("Kleinbuchstaben", "abcdefghijklmnopqrstuvwxyzäöüß".map(String.init)),
-        ("Großbuchstaben", "ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ".map(String.init)),
-        ("Ziffern", "0123456789".map(String.init)),
-        ("Zeichen", ".,:;!?-+=()/%°·×÷√π≈≠<>→".map(String.init)),
+    static let trainingGroups: [TrainingGroup] = [
+        TrainingGroup(title: "Kleinbuchstaben", characters: "abcdefghijklmnopqrstuvwxyzäöüß".map(String.init)),
+        TrainingGroup(title: "Großbuchstaben", characters: "ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ".map(String.init)),
+        TrainingGroup(title: "Ziffern", characters: "0123456789".map(String.init)),
+        TrainingGroup(title: "Zeichen", characters: ".,:;!?-+=()/%°·×÷√π≈≠<>→".map(String.init)),
     ]
+}
+
+struct TrainingGroup: Identifiable {
+    let title: String
+    let characters: [String]
+    var id: String { title }
 }

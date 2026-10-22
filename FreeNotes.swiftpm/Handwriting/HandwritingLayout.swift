@@ -178,7 +178,8 @@ enum HandwritingLayout {
             var s = style
             s.xHeight = xh
             best = layout(text, font: font, style: s, ruling: ruling, seed: seed)
-            if best.overflow == nil { return best }
+            // Auch ein zu langes Einzelwort, das intern umbricht, gilt als »passt nicht«
+            if best.overflow == nil, best.lastBaseline <= ruling.bottom + 0.5 { return best }
             xh *= 0.88
             if xh < 4 { break }
         }

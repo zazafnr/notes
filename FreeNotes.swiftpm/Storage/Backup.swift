@@ -54,6 +54,7 @@ enum Backup {
             throw RestoreError.copyFailed
         }
         store.reload()
+        HandwritingStore.shared.reload()
     }
 }
 

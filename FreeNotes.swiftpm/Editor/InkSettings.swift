@@ -63,6 +63,7 @@ final class InkSettings: ObservableObject {
     @Published var eraserWidth: Double { didSet { defaults.set(eraserWidth, forKey: "ink.eraserWidth") } }
 
     static let eraserRange: ClosedRange<Double> = 4...80
+    static let eraserPresets: [String: Double] = ["Klein": 8, "Mittel": 20, "Groß": 45]
 
     private var toolBeforeEraser: InkTool = .pen
 
@@ -211,9 +212,9 @@ struct InkOptionsView: View {
                     .frame(width: CGFloat(InkSettings.eraserRange.upperBound), height: CGFloat(InkSettings.eraserRange.upperBound))
                 }
                 HStack(spacing: 8) {
-                    ForEach([("Klein", 8.0), ("Mittel", 20.0), ("Groß", 45.0)], id: \.0) { preset in
-                        let value = preset.1
-                        Button(preset.0) { ink.eraserWidth = value }
+                    ForEach(["Klein", "Mittel", "Groß"], id: \.self) { title in
+                        let value = InkSettings.eraserPresets[title] ?? 16
+                        Button(title) { ink.eraserWidth = value }
                             .font(.subheadline.weight(.medium))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)

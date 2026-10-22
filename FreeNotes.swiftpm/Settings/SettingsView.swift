@@ -38,6 +38,18 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        HandwritingSettingsView()
+                    } label: {
+                        Label("Meine Handschrift", systemImage: "pencil.and.scribble")
+                    }
+                } header: {
+                    Text("Handschrift")
+                } footer: {
+                    Text("So schreibt die App KI-Antworten in deiner Schrift ins Heft. Hier kannst du Größe und Tempo einstellen und einzelne Buchstaben selbst nachschreiben.")
+                }
+
+                Section {
                     Toggle("Auch mit dem Finger zeichnen", isOn: $settings.fingerDrawing)
                     Picker("Doppeltippen / Drücken", selection: $settings.pencilAction) {
                         ForEach(PencilAction.allCases) { Text($0.title).tag($0) }
