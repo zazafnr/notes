@@ -59,6 +59,10 @@ final class InkSettings: ObservableObject {
     @Published var markerColor: UIColor { didSet { defaults.set(markerColor.hexString, forKey: "ink.markerColor") } }
     @Published var widthIndex: Int { didSet { defaults.set(widthIndex, forKey: "ink.width") } }
     @Published var eraserWholeStrokes: Bool { didSet { defaults.set(eraserWholeStrokes, forKey: "ink.eraserWhole") } }
+    /// Größe des Radierers in Punkten.
+    @Published var eraserWidth: Double { didSet { defaults.set(eraserWidth, forKey: "ink.eraserWidth") } }
+
+    static let eraserRange: ClosedRange<Double> = 4...80
 
     private var toolBeforeEraser: InkTool = .pen
 
@@ -68,6 +72,8 @@ final class InkSettings: ObservableObject {
         markerColor = UIColor(hex: defaults.string(forKey: "ink.markerColor") ?? "") ?? Self.markerColors[0]
         widthIndex = defaults.object(forKey: "ink.width") as? Int ?? 1
         eraserWholeStrokes = defaults.bool(forKey: "ink.eraserWhole")
+        eraserWidth = min(max(defaults.object(forKey: "ink.eraserWidth") as? Double ?? 16, Self.eraserRange.lowerBound),
+                          Self.eraserRange.upperBound)
     }
 
     /// Farbe des aktuellen Stifts (für die Anzeige in der Leiste).
@@ -98,7 +104,7 @@ final class InkSettings: ObservableObject {
         case .pen: return PKInkingTool(.pen, color: penColor, width: width(for: .pen))
         case .pencil: return PKInkingTool(.pencil, color: penColor, width: width(for: .pencil))
         case .marker: return PKInkingTool(.marker, color: markerColor, width: width(for: .marker))
-        case .eraser: return PKEraserTool(eraserWholeStrokes ? .vector : .bitmap)
+        case .eraser: return PKEraserTool(eraserWholeStrokes ? .vector : .bitmap, width: CGFloat(eraserWidth))
         case .lasso: return PKLassoTool()
         }
     }
@@ -192,6 +198,29 @@ struct InkOptionsView: View {
                     Text("Ganze Striche").tag(true)
                 }
                 .pickerStyle(.segmented)
+                Text("Größe").font(.subheadline.weight(.semibold))
+                HStack(spacing: 14) {
+                    Slider(value: $ink.eraserWidth, in: InkSettings.eraserRange)
+                    // Vorschau in echter Größe
+                    ZStack {
+                        Circle()
+                            .strokeBorder(Color.primary.opacity(0.6), lineWidth: 1.5)
+                            .background(Circle().fill(Color.primary.opacity(0.06)))
+                            .frame(width: CGFloat(ink.eraserWidth), height: CGFloat(ink.eraserWidth))
+                    }
+                    .frame(width: CGFloat(InkSettings.eraserRange.upperBound), height: CGFloat(InkSettings.eraserRange.upperBound))
+                }
+                HStack(spacing: 8) {
+                    ForEach([("Klein", 8.0), ("Mittel", 20.0), ("Groß", 45.0)], id: \.0) { preset in
+                        let value = preset.1
+                        Button(preset.0) { ink.eraserWidth = value }
+                            .font(.subheadline.weight(.medium))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.primary.opacity(abs(ink.eraserWidth - value) < 1 ? 0.16 : 0.06), in: Capsule())
+                            .buttonStyle(.plain)
+                    }
+                }
             } else {
                 Text(ink.tool.usesColor ? ink.tool.title : "Stift").font(.headline)
                 HStack(spacing: 12) {

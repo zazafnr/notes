@@ -27,7 +27,7 @@ final class AISettings: ObservableObject {
     @Published var fingerDrawing: Bool { didSet { defaults.set(fingerDrawing, forKey: "pen.finger") } }
     @Published var hasOnboarded: Bool { didSet { defaults.set(hasOnboarded, forKey: "app.onboarded") } }
     @Published var flipDirection: FlipDirection { didSet { defaults.set(flipDirection.rawValue, forKey: "pages.flip") } }
-    @Published var pencilAction: PencilAction { didSet { defaults.set(pencilAction.rawValue, forKey: "pen.action") } }
+    @Published var pencilAction: PencilAction { didSet { defaults.set(pencilAction.rawValue, forKey: "pen.action.v2") } }
     @Published private(set) var keyVersion = 0
     /// Geschätzte Claude-Kosten in diesem Monat (US-Dollar, aus den gemeldeten Tokens).
     @Published private(set) var claudeSpent: Double
@@ -53,7 +53,8 @@ final class AISettings: ObservableObject {
         fingerDrawing = defaults.bool(forKey: "pen.finger")
         hasOnboarded = defaults.bool(forKey: "app.onboarded")
         flipDirection = FlipDirection(rawValue: defaults.string(forKey: "pages.flip") ?? "") ?? .horizontal
-        pencilAction = PencilAction(rawValue: defaults.string(forKey: "pen.action") ?? "") ?? .ai
+        // Standard: Doppeltippen wechselt zum Radierer (wie bei Apple); KI-Kreis über ✨ oben
+        pencilAction = PencilAction(rawValue: defaults.string(forKey: "pen.action.v2") ?? "") ?? .eraser
     }
 
     func key(for p: AIProviderKind) -> String {
