@@ -7,6 +7,8 @@ struct LassoSnapshot: Identifiable {
     let id = UUID()
     let image: UIImage
     let rect: CGRect
+    /// Ganze Buchseite, wenn im Buch eingekreist wurde (zum Ausfüllen im Heft).
+    var sourcePage: UIImage? = nil
 }
 
 @MainActor
@@ -379,10 +381,10 @@ final class EditorModel: ObservableObject {
     }
 
     /// Ausschnitt aus dem Buch an die KI (öffnet das Frage-Fenster).
-    func ask(about image: UIImage) {
+    func ask(about image: UIImage, sourcePage: UIImage? = nil) {
         lastLassoRect = nil
         Haptics.success()
-        snapshot = LassoSnapshot(image: image, rect: .zero)
+        snapshot = LassoSnapshot(image: image, rect: .zero, sourcePage: sourcePage)
     }
 
     func toggleRuler() {

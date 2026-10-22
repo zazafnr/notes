@@ -154,6 +154,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     /// Text, der tatsächlich an die KI geschickt wird (falls abweichend).
     var prompt: String? = nil
     var images: [String] = []
+    /// Ganze Buchseite zur Frage (Bilddatei), falls im Buch eingekreist wurde.
+    var sourcePage: String? = nil
     var isError = false
     var meta: String? = nil
     var date = Date()

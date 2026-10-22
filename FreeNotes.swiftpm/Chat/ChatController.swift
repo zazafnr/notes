@@ -21,12 +21,13 @@ final class ChatController: ObservableObject {
 
     var thread: ChatThread? { store.thread(threadID) }
 
-    func send(display: String, prompt: String? = nil, images: [UIImage] = []) {
+    func send(display: String, prompt: String? = nil, images: [UIImage] = [], sourcePage: UIImage? = nil) {
         guard !isStreaming else { return }
         let text = display.trimmed
         guard !text.isEmpty || !images.isEmpty else { return }
         let names = images.compactMap { store.saveChatImage($0) }
-        let message = ChatMessage(role: .user, text: text.isEmpty ? "Bild" : text, prompt: prompt, images: names)
+        var message = ChatMessage(role: .user, text: text.isEmpty ? "Bild" : text, prompt: prompt, images: names)
+        message.sourcePage = sourcePage.flatMap { store.saveChatImage($0) }
         store.updateThread(threadID) { thread in
             thread.messages.append(message)
             if thread.notebookID == nil, thread.title == "Neuer Chat" {

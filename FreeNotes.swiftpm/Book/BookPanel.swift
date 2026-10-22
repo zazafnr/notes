@@ -230,7 +230,10 @@ struct BookPanel: View {
                         Task {
                             if let image = await browser.snapshot(of: rect) {
                                 circling = false
-                                model.ask(about: image)
+                                // Ganze Buchseite merken: Damit kann die Aufgabe später direkt auf der Seite im Heft ausgefüllt werden
+                                let viewSize = browser.webView.bounds.size
+                                let page = await browser.snapshot().map { PageCropper.page(containing: rect, viewSize: viewSize, in: $0) }
+                                model.ask(about: image, sourcePage: page)
                             }
                         }
                     }

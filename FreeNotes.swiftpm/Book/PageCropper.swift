@@ -28,6 +28,22 @@ enum PageCropper {
                       width: CGFloat(found.x.count) * sx, height: CGFloat(found.y.count) * sy).integral
     }
 
+    /// Die Buchseite, auf der ein eingekreister Bereich liegt (bei Doppelseiten die passende Hälfte).
+    /// `rect` und `viewSize` in Punkten des Buch-Fensters.
+    static func page(containing rect: CGRect, viewSize: CGSize, in image: UIImage) -> UIImage {
+        guard let cg = image.cgImage, viewSize.width > 0 else { return image }
+        var bounds = pageBounds(in: image)
+        if PageDetection.isSpread(width: bounds.width, height: bounds.height) {
+            let midX = rect.midX * CGFloat(cg.width) / viewSize.width
+            let half = bounds.width / 2
+            bounds = midX < bounds.minX + half
+                ? CGRect(x: bounds.minX, y: bounds.minY, width: half, height: bounds.height)
+                : CGRect(x: bounds.minX + half, y: bounds.minY, width: half, height: bounds.height)
+        }
+        guard let cropped = cg.cropping(to: bounds.integral) else { return image }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+    }
+
     /// Linke, rechte Seite oder die ganze Doppelseite.
     static func crop(_ image: UIImage, part: Part) -> UIImage {
         guard let cg = image.cgImage else { return image }

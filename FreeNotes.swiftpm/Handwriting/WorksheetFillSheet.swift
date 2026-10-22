@@ -7,6 +7,10 @@ struct WorksheetFillSheet: View {
     @ObservedObject var model: EditorModel
     /// Bereits vorhandene Lösungen (z. B. aus dem Chat), sonst löst die KI selbst.
     var solutions: String?
+    /// Die Seite ist eine gerade eingefügte Buchseite.
+    var fromBook = false
+    /// Keine passenden Stellen gefunden: Lösung stattdessen als Heft-Eintrag schreiben.
+    var onFallback: ((String) -> Void)? = nil
     @EnvironmentObject private var settings: AISettings
     @Environment(\.dismiss) private var dismiss
 
@@ -32,12 +36,25 @@ struct WorksheetFillSheet: View {
                             .foregroundStyle(.orange)
                             .font(.subheadline)
                     }
+                    if !working, fields.isEmpty, let solutions, let onFallback {
+                        Button {
+                            dismiss()
+                            Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 450_000_000)
+                                onFallback(solutions)
+                            }
+                        } label: {
+                            Label("Lösung stattdessen auf eine neue Heftseite schreiben", systemImage: "pencil.and.scribble")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
                     if !fields.isEmpty { fieldList }
                 }
                 .padding(20)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("Zettel ausfüllen")
+            .navigationTitle(fromBook ? "Buchseite ausfüllen" : "Zettel ausfüllen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -163,7 +180,10 @@ struct WorksheetFillSheet: View {
                 guard !Task.isCancelled else { return }
                 let parsed = WorksheetField.parse(raw, imageScale: scale, pageSize: pageSize)
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { fields = parsed }
-                if parsed.isEmpty { error = "Keine Lücken gefunden. Ist die Seite ein Arbeitsblatt?" }
+                if parsed.isEmpty {
+                    error = solutions == nil ? "Keine Lücken gefunden. Ist die Seite ein Arbeitsblatt?"
+                        : "Auf der Seite ist kein Platz für die Lösung gefunden worden."
+                }
             } catch is CancellationError {
                 return
             } catch {

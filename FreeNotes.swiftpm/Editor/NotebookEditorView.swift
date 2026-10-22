@@ -125,7 +125,7 @@ struct NotebookEditorView: View {
         .sheet(item: $model.snapshot) { snap in
             AskSheet(snapshot: snap,
                      isLatin: QuickAction.isLatin([model.notebook?.title, store.subject(model.notebook?.subjectID)?.name])) { display, prompt in
-                chat.send(display: display, prompt: prompt, images: [snap.image])
+                chat.send(display: display, prompt: prompt, images: [snap.image], sourcePage: snap.sourcePage)
                 model.aiMode = false
                 model.showPanel = true
             }
@@ -169,7 +169,10 @@ struct NotebookEditorView: View {
             HandwritingWriteSheet(model: model, request: request)
         }
         .sheet(item: $worksheet) { request in
-            WorksheetFillSheet(model: model, solutions: request.solutions)
+            WorksheetFillSheet(model: model, solutions: request.solutions, fromBook: request.fromBook) { text in
+                // Keine Lücken auf der Seite: Lösung stattdessen wie im Heft auf eine neue Seite schreiben
+                writeRequest = WriteRequest(answer: text)
+            }
         }
         .sheet(isPresented: $showPages) {
             PageOverviewView(model: model)
@@ -196,7 +199,13 @@ struct NotebookEditorView: View {
             let images = question?.images.compactMap { store.chatImage($0) } ?? []
             writeRequest = WriteRequest(answer: answer.text, question: question.map { $0.prompt ?? $0.text }, images: images)
         case .worksheet:
-            worksheet = WorksheetRequest(solutions: answer.text)
+            if let name = question?.sourcePage, let page = store.chatImage(name) {
+                // Aufgabe kam aus dem Buch: ganze Buchseite als neue Heftseite einfügen und dort ausfüllen
+                model.addBackgroundPages([page])
+                worksheet = WorksheetRequest(solutions: answer.text, fromBook: true)
+            } else {
+                worksheet = WorksheetRequest(solutions: answer.text)
+            }
         case .card:
             model.insertAnswer(answer.text)
         }
@@ -443,6 +452,8 @@ struct NotebookEditorView: View {
 struct WorksheetRequest: Identifiable {
     let id = UUID()
     var solutions: String?
+    /// Die Seite ist eine gerade eingefügte Buchseite.
+    var fromBook = false
 }
 
 struct ShareItem: Identifiable {

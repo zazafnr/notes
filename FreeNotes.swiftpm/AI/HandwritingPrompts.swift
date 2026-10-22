@@ -105,7 +105,15 @@ enum HandwritingPrompts {
             text += "[\(Int(r.minX)), \(Int(r.minY)), \(Int(r.width)), \(Int(r.height))] \(line.text)\n"
         }
         if let solutions, !solutions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            text += "\nVerwende diese bereits erarbeiteten Lösungen (nur an die passenden Stellen eintragen):\n\(solutions)\n"
+            text += """
+
+            Trage NUR diese bereits erarbeiteten Lösungen ein, jeweils an der passenden Stelle (andere Aufgaben leer lassen). \
+            Hat die Aufgabe keine Lücken oder Linien, nutze freien Platz direkt neben oder unter der Aufgabe \
+            (Rand, Zwischenraum) und teile längere Lösungen auf mehrere Felder auf.
+            Lösungen:
+            \(solutions)
+
+            """
         }
         text += "\nGib jetzt das JSON mit allen Feldern."
         return text
