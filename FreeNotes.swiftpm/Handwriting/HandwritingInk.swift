@@ -9,13 +9,22 @@ enum HandwritingInk {
     /// Die KI schreibt immer mit schwarzem Kuli, unabhängig von der gewählten Stiftfarbe.
     static let color = UIColor.black
 
-    /// »Monoline« zeichnet genau die angegebene Breite wie ein Kuli. Der normale Stift (.pen) verändert die Breite
-    /// je nach Druck und ließ sehr dünne Striche nach dem Schreiben verschwinden.
-    static let inkType: PKInkingTool.InkType = .monoline
+    /// Normaler Stift wie beim eigenen Schreiben (Monoline erschien auf dem iPad weiß statt schwarz).
+    static let inkType: PKInkingTool.InkType = .pen
 
-    /// Strichstärke wie ein feiner Kuli; bei kleiner Schrift etwas dünner (nie unter 1,7 pt).
+    /// Strichstärke wie der eigene Stift auf »Fein« (2 pt): dünn, aber sicher sichtbar.
+    /// Darunter zeichnet PencilKit den Stift teils gar nicht mehr.
     static func pointSize(penWidth: CGFloat, xHeight: Double) -> CGFloat {
-        max(1.7, 2.1 * CGFloat(min(1.1, max(0.8, xHeight / 12.5))))
+        2.2 * CGFloat(min(1.05, max(0.92, xHeight / 12.5)))
+    }
+
+    /// Tinte immer im hellen Modus anlegen, damit Schwarz nicht für den Dunkelmodus umgerechnet wird.
+    static func makeInk(_ color: UIColor) -> PKInk {
+        var ink = PKInk(inkType, color: color)
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            ink = PKInk(inkType, color: color.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light)))
+        }
+        return ink
     }
 
     static func pkStroke(_ stroke: HWStroke, ink: PKInk, size: CGFloat, xHeight: Double, date: Date) -> PKStroke? {
@@ -42,7 +51,7 @@ enum HandwritingInk {
     }
 
     static func pkStrokes(_ strokes: [HWStroke], color: UIColor, size: CGFloat, xHeight: Double) -> [PKStroke] {
-        let ink = PKInk(HandwritingInk.inkType, color: color)
+        let ink = HandwritingInk.makeInk(color)
         let date = Date()
         return strokes.compactMap { pkStroke($0, ink: ink, size: size, xHeight: xHeight, date: date) }
     }
@@ -120,7 +129,7 @@ final class HandwritingAnimator {
         self.color = color
         self.size = size
         self.speed = max(0.25, speed)
-        let ink = PKInk(HandwritingInk.inkType, color: color)
+        let ink = HandwritingInk.makeInk(color)
         let date = Date()
         pkStrokes = strokes.map { HandwritingInk.pkStroke($0, ink: ink, size: size, xHeight: xHeight, date: date) }
         // Zeitplan: Strichlänge durch Tempo, dazwischen Stift absetzen und weiterführen
