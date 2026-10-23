@@ -124,52 +124,53 @@ print("Plattform: iOS \(UIDevice.current.systemVersion)")
 print("Plattform: macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
 #endif
 
-var inks: [(PKInk.InkType, String)] = [(.pen, "pen"), (.pencil, "pencil"), (.marker, "marker")]
+var inks: [(PKInk.InkType, String)] = [(.pen, "pen")]
 if #available(iOS 17.0, macOS 14.0, *) {
-    inks += [(.monoline, "monoline"), (.fountainPen, "fountainPen")]
-    for (ink, name) in inks {
-        print("Gültige Breite \(name): \(ink.validWidthRange), Standard \(ink.defaultWidth)")
-    }
+    inks += [(.monoline, "monoline")]
+    print("Gültige Breite pen: \(PKInk.InkType.pen.validWidthRange)")
 }
 
-print("\n== Stift (.pen): Größe × Druck, Tempo 190 pt/s ==")
-for size: CGFloat in [0.5, 1, 1.5, 1.7, 2, 2.2, 2.5, 3, 3.4, 4, 5, 6, 8] {
-    for force: CGFloat in [0.25, 0.5, 1, 2, 4] {
-        report(Config(ink: .pen, name: "pen", size: size, force: force))
+/// Kreis wie ein »o«: durchschnittliche Tintenbreite entlang der Kurve.
+func circleCover(size: CGFloat, radius: CGFloat, scale: CGFloat) -> (cover: Double, darkest: Int) {
+    let center = CGPoint(x: 20, y: 50)
+    let n = max(12, Int(2 * .pi * radius / 0.8))
+    var points: [PKStrokePoint] = []
+    for i in 0...n {
+        let a = 2 * CGFloat.pi * CGFloat(i) / CGFloat(n)
+        points.append(PKStrokePoint(location: CGPoint(x: center.x + radius * cos(a), y: center.y + radius * sin(a)),
+                                    timeOffset: Double(i) * 0.004, size: CGSize(width: size, height: size),
+                                    opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2))
     }
+    let s = PKStroke(ink: PKInk(.pen, color: .black), path: PKStrokePath(controlPoints: points, creationDate: Date()))
+    let rect = CGRect(x: 0, y: 0, width: 40, height: 100)
+    guard let cg = render(PKDrawing(strokes: [s]), rect: rect, scale: scale, dark: false) else { return (0, 255) }
+    let w = cg.width, h = cg.height
+    var buffer = [UInt8](repeating: 255, count: w * h * 4)
+    buffer.withUnsafeMutableBytes { raw in
+        guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+    }
+    var sum = 0.0
+    var darkest = 255
+    for i in stride(from: 0, to: buffer.count, by: 4) {
+        let lum = (299 * Int(buffer[i]) + 587 * Int(buffer[i + 1]) + 114 * Int(buffer[i + 2])) / 1000
+        sum += Double(255 - lum) / 255
+        darkest = min(darkest, lum)
+    }
+    let px = Double(w) / Double(rect.width)
+    return (sum / (px * px) / Double(2 * .pi * radius), darkest)
 }
 
-print("\n== Stift (.pen): Tempo und Winkel bei Größe 2 und 3.4 ==")
-for size: CGFloat in [2, 3.4] {
-    for speed in [0.0, 50, 190, 600, 2000] { report(Config(ink: .pen, name: "pen", size: size, speed: speed)) }
-    for alt: CGFloat in [.pi / 2, .pi / 3, .pi / 4, .pi / 8] { report(Config(ink: .pen, name: "pen", size: size, altitude: alt)) }
-    for op: CGFloat in [0.5, 1, 2] { report(Config(ink: .pen, name: "pen", size: size, opacity: op)) }
-    for step: CGFloat in [0.3, 0.8, 2] { report(Config(ink: .pen, name: "pen", size: size, step: step), label: " step \(step)") }
-}
-
-if #available(iOS 17.0, macOS 14.0, *) {
-    print("\n== Monoline und Füller ==")
-    for size: CGFloat in [0.5, 1, 1.5, 1.7, 2, 2.2, 2.5, 3, 4] {
-        for force: CGFloat in [0.5, 1, 4] {
-            report(Config(ink: .monoline, name: "monoline", size: size, force: force))
-        }
-    }
-    for size: CGFloat in [1, 2, 3, 4] {
-        report(Config(ink: .fountainPen, name: "fountainPen", size: size))
+print("\n== Feine Größen bei Bildschirm-Skala 1, 2, 3 und 4 (Zoom) ==")
+for scale: CGFloat in [1, 2, 3, 4] {
+    for size: CGFloat in [2.3, 2.4, 2.5, 2.6, 2.7, 2.75, 2.8, 2.9, 3.0, 3.2] {
+        let m = measure(stroke(Config(ink: .pen, name: "pen", size: size)), scale: scale)
+        let c = circleCover(size: size, radius: 3.5, scale: scale)
+        print("skala \(Int(scale)) size \(f(size)) | gerade: schwarz \(f(m.solid)) pt, sichtbar \(f(m.visible)) pt, tinte \(f(m.cover)) pt, dunkelster \(m.darkest) | »o«: tinte \(f(c.cover)) pt, dunkelster \(c.darkest) | mitte: \(m.pixels)")
     }
 }
-
-print("\n== Dunkelmodus (Schwarz wird dort evtl. umgefärbt) ==")
-report(Config(ink: .pen, name: "pen", size: 2), dark: true)
-report(Config(ink: .pen, name: "pen", size: 3.4), dark: true)
-if #available(iOS 17.0, macOS 14.0, *) {
-    report(Config(ink: .monoline, name: "monoline", size: 2), dark: true)
-}
-#if canImport(UIKit)
-var resolved = UIColor.black
-UITraitCollection(userInterfaceStyle: .dark).performAsCurrent { resolved = UIColor.label }
-report(Config(ink: .pen, name: "pen", size: 2), color: resolved, label: " (Farbe = label im Dunkelmodus)")
-report(Config(ink: .pen, name: "pen", size: 2), color: UIColor(white: 0, alpha: 1), label: " (Farbe = white 0)")
-report(Config(ink: .pen, name: "pen", size: 2), color: UIColor(red: 0, green: 0, blue: 0, alpha: 1), label: " (Farbe = rgb 0)")
-#endif
 print("\nfertig")
