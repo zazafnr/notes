@@ -478,10 +478,10 @@ final class PageCanvasHost: UIView, PKCanvasViewDelegate, UIPencilInteractionDel
     }
 
     @objc private func handleTap(_ tap: UITapGestureRecognizer) {
+        // Antippen eines Bildes startet die Bearbeitung nicht mehr (war beim Schreiben störend);
+        // dafür gibt es den Bilder-Knopf links. Im Bearbeiten-Modus beendet ein Tipp daneben ihn.
         let point = tap.location(in: paper)
-        if page.items.contains(where: { $0.contains(point) }) {
-            onImageTap?()
-        } else if imageEditMode {
+        if imageEditMode, !page.items.contains(where: { $0.contains(point) }) {
             // Daneben getippt: Bearbeiten beenden
             onEmptyTap?()
         }

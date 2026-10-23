@@ -9,11 +9,11 @@ enum HandwritingInk {
     /// Die KI schreibt immer mit schwarzem Kuli, unabhängig von der gewählten Stiftfarbe.
     static let color = UIColor.black
 
-    /// Strichstärke wie ein normaler Kuli (mindestens wie der Stift auf »Mittel«), bei kleiner Schrift nur wenig dünner –
-    /// sehr dünne schwarze Striche wirken sonst grau.
+    /// Strichstärke wie ein feiner Kuli; bei kleiner Schrift etwas dünner.
     static func pointSize(penWidth: CGFloat, xHeight: Double) -> CGFloat {
-        let base = max(3.4, penWidth * 0.95)
-        return base * CGFloat(min(1.1, max(0.85, xHeight / 12.5)))
+        // PencilKit-Stift zeichnet bei gleicher Punktgröße deutlich kräftiger als erwartet: schmal halten
+        let base: CGFloat = 1.7
+        return base * CGFloat(min(1.1, max(0.8, xHeight / 12.5)))
     }
 
     static func pkStroke(_ stroke: HWStroke, ink: PKInk, size: CGFloat, xHeight: Double, date: Date) -> PKStroke? {
