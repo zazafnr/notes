@@ -4,9 +4,9 @@ import Foundation
 /// Probiert wie der Chat die Anbieter der Reihe nach und zählt die Claude-Kosten mit.
 @MainActor
 enum AIRequest {
-    /// `onText`: meldet, wie viele Zeichen schon angekommen sind (für eine Fortschrittsanzeige).
+    /// `onText`: meldet den bisher angekommenen Text (für eine Fortschrittsanzeige).
     static func text(system: String, user: String, images: [String] = [], settings: AISettings,
-                     effort: String = "low", onText: ((Int) -> Void)? = nil,
+                     effort: String = "low", onText: ((String) -> Void)? = nil,
                      onStatus: ((String) -> Void)? = nil) async throws -> String {
         let messages = [AIMessage(role: "system", text: system), AIMessage(role: "user", text: user, images: images)]
         var lastError: Error = AIError.empty
@@ -20,7 +20,7 @@ enum AIRequest {
                     switch chunk {
                     case .text(let piece):
                         text += piece
-                        onText?(text.count)
+                        onText?(text)
                     case .usage(let input, let output):
                         settings.recordClaudeUsage(model: config.model, inputTokens: input, outputTokens: output)
                     }

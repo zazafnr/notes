@@ -133,7 +133,7 @@ struct NotebookEditorView: View {
                      onFill: {
                          model.aiMode = false
                          openWorksheet(solutions: nil, bookPage: snap.sourcePage, pageID: snap.pageID,
-                                       area: snap.sourceArea)
+                                       area: snap.sourceArea, taskImage: snap.image)
                      })
         }
         .photosPicker(isPresented: $showPhotos, selection: $photoItem, matching: .images)
@@ -181,7 +181,8 @@ struct NotebookEditorView: View {
         }
         .sheet(item: $worksheet) { request in
             WorksheetFillSheet(model: model, solutions: request.solutions, fromBook: request.fromBook,
-                               taskArea: request.taskArea) { text in
+                               taskArea: request.taskArea, taskImage: request.taskImage,
+                               subject: store.subject(model.notebook?.subjectID)?.name) { text in
                 // Keine Lücken auf der Seite: Lösung stattdessen wie im Heft auf eine neue Seite schreiben
                 writeRequest = WriteRequest(answer: text)
             }
@@ -243,13 +244,14 @@ struct NotebookEditorView: View {
     }
 
     /// Zettel ausfüllen: Buchseite einfügen bzw. zur Seite mit der Aufgabe blättern, dann die Felder suchen.
-    private func openWorksheet(solutions: String?, bookPage: UIImage?, pageID: UUID?, area: CGRect?) {
+    private func openWorksheet(solutions: String?, bookPage: UIImage?, pageID: UUID?, area: CGRect?,
+                               taskImage: UIImage? = nil) {
         if let bookPage {
             model.addBackgroundPages([bookPage])
         } else if let pageID, let index = model.notebook?.pages.firstIndex(where: { $0.id == pageID }) {
             model.goTo(index)
         }
-        let request = WorksheetRequest(solutions: solutions, fromBook: bookPage != nil, taskArea: area)
+        let request = WorksheetRequest(solutions: solutions, fromBook: bookPage != nil, taskArea: area, taskImage: taskImage)
         // Kurz warten, bis das vorige Fenster zu ist (zwei Fenster gleichzeitig gehen nicht)
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 550_000_000)
@@ -502,6 +504,8 @@ struct WorksheetRequest: Identifiable {
     var fromBook = false
     /// Eingekreiste Aufgabe auf der Seite (Anteile 0…1).
     var taskArea: CGRect? = nil
+    /// Der eingekreiste Ausschnitt als Bild (zum Lösen, wenn noch keine Lösungen da sind).
+    var taskImage: UIImage? = nil
 }
 
 /// Herkunft einer Aufgabe, um die Antwort an der richtigen Stelle einzutragen.

@@ -1,0 +1,47 @@
+name: Tinten-Messung
+
+# Misst, wie PencilKit die Striche der KI-Handschrift zeichnet (Breite, Schwärze),
+# auf dem Mac und im iPad-Simulator. Ergebnis steht im Protokoll des Laufs.
+on:
+  push:
+    paths:
+      - ".github/ink-probe/**"
+      - ".github/workflows/ink-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        xcode: ["16", "26"]
+    name: messen (Xcode ${{ matrix.xcode }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode ${{ matrix.xcode }} wählen
+        run: |
+          XC=$(ls -d /Applications/Xcode_${{ matrix.xcode }}*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: Im iPad-Simulator messen
+        continue-on-error: true
+        run: |
+          SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          xcrun --sdk iphonesimulator swiftc -target arm64-apple-ios17.0-simulator -sdk "$SDK" \
+            .github/ink-probe/InkProbe.swift -o inkprobe-ios
+          xcrun simctl list devices available | grep -E "iPad" | head -5
+          UDID=$(xcrun simctl list devices available | grep -E "iPad" | head -1 | grep -oE "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}")
+          echo "Simulator: $UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl spawn "$UDID" "$PWD/inkprobe-ios"
+
+      - name: Auf dem Mac messen
+        continue-on-error: true
+        run: |
+          swiftc .github/ink-probe/InkProbe.swift -o inkprobe-mac
+          ./inkprobe-mac

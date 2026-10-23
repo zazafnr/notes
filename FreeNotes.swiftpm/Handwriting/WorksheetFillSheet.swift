@@ -10,13 +10,17 @@ struct WorksheetFillSheet: View {
     var fromBook = false
     /// Wo die eingekreiste Aufgabe liegt (Anteile 0…1): Nur dort wird eingetragen.
     var taskArea: CGRect? = nil
+    /// Der eingekreiste Ausschnitt, genau wie er im Chat an die KI ginge (zum Lösen ohne fertige Lösungen).
+    var taskImage: UIImage? = nil
+    /// Fach des Hefts (für das Lösen wie im Chat).
+    var subject: String? = nil
     /// Keine passenden Stellen gefunden: Lösung stattdessen als Heft-Eintrag schreiben.
     var onFallback: ((String) -> Void)? = nil
     @EnvironmentObject private var settings: AISettings
     @Environment(\.dismiss) private var dismiss
 
     enum Stage: Equatable {
-        case reading, thinking, answering, done
+        case reading, solving, thinking, answering, done
     }
 
     @State private var crop: WorksheetCrop?
@@ -31,9 +35,16 @@ struct WorksheetFillSheet: View {
     @State private var attempt = 0
     /// Welcher KI-Anbieter gerade gefragt wird (oder warum gewechselt wurde).
     @State private var providerStatus = ""
+    /// Ohne mitgegebene Lösungen: die selbst erarbeiteten (Schritt 1), damit »Nochmal« nicht neu lösen muss.
+    @State private var solved: String?
+    /// Die Lösung, während sie ankommt (zeigt, dass die KI arbeitet).
+    @State private var liveText = ""
 
-    /// Länger wartet niemand: danach abbrechen und »Nochmal« anbieten.
+    /// Länger wartet niemand: danach abbrechen und »Nochmal« anbieten (gilt je Schritt).
     private let timeout: UInt64 = 80
+
+    /// Lösungen, die eingetragen werden: mitgegeben oder in Schritt 1 erarbeitet.
+    private var knownSolutions: String? { solutions ?? solved }
 
     private var working: Bool { stage != .done }
 
@@ -72,7 +83,11 @@ struct WorksheetFillSheet: View {
                 }
             }
         }
-        .onAppear { start() }
+        .onAppear {
+            // Erscheint das Fenster erneut, nachdem es kurz verschwunden war (und der Lauf dabei abgebrochen wurde),
+            // neu starten statt mit stehender Anzeige zu warten.
+            if task == nil || (task?.isCancelled == true && working && !timedOut) { start() }
+        }
         .onDisappear { cancelRunning() }
     }
 
@@ -136,6 +151,15 @@ struct WorksheetFillSheet: View {
         VStack(spacing: 10) {
             ProgressView()
             Text(stageText).font(.subheadline.weight(.medium))
+            if stage == .solving, !liveText.isEmpty {
+                // Die letzten Zeilen der Lösung, während sie entsteht
+                Text(liveTail)
+                    .font(.caption)
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(4)
+                    .frame(maxWidth: 320, alignment: .leading)
+            }
             if !providerStatus.isEmpty {
                 Text(providerStatus)
                     .font(.caption)
@@ -156,10 +180,19 @@ struct WorksheetFillSheet: View {
     private var stageText: String {
         switch stage {
         case .reading: return "Lese den Zettel …"
-        case .thinking: return solutions == nil ? "KI löst die Aufgabe …" : "KI sucht die passenden Stellen …"
+        case .solving: return "KI löst die Aufgabe …"
+        case .thinking: return "KI sucht die passenden Stellen …"
         case .answering: return "KI trägt die Antworten zusammen …"
         case .done: return ""
         }
+    }
+
+    private var liveTail: String {
+        let lines = liveText.replacingOccurrences(of: "**", with: "")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return lines.suffix(4).joined(separator: "\n")
     }
 
     private func errorBox(_ message: String) -> some View {
@@ -174,12 +207,12 @@ struct WorksheetFillSheet: View {
                     Label("Nochmal versuchen", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.borderedProminent)
-                if let solutions, let onFallback {
+                if let text = knownSolutions, let onFallback {
                     Button {
                         dismiss()
                         Task { @MainActor in
                             try? await Task.sleep(nanoseconds: 450_000_000)
-                            onFallback(solutions)
+                            onFallback(text)
                         }
                     } label: {
                         Label("Auf neue Heftseite schreiben", systemImage: "pencil.and.scribble")
@@ -228,11 +261,11 @@ struct WorksheetFillSheet: View {
 
     private func start(retry: Bool = false) {
         guard let page = model.currentPage else { return }
-        if !retry, task != nil { return }
         cancelRunning()
         attempt += 1
         error = nil
         providerStatus = ""
+        liveText = ""
         timedOut = false
         fields = []
         stage = .reading
@@ -252,7 +285,6 @@ struct WorksheetFillSheet: View {
             crop.toPixels(CGRect(x: $0.minX * pageSize.width, y: $0.minY * pageSize.height,
                                  width: $0.width * pageSize.width, height: $0.height * pageSize.height))
         }
-        let solutions = solutions
         // Gleicher Modus wie im Chat mit Bild (dort funktioniert es zuverlässig); beim Wiederholen schneller
         let effort = retry ? "low" : "medium"
         let unit = Double(crop.scale)
@@ -267,11 +299,33 @@ struct WorksheetFillSheet: View {
             error = "Die Seite konnte nicht gelesen werden."
             return
         }
-        stage = .thinking
+        // Für Schritt 1 genau das Bild, das auch der Chat bekäme: der eingekreiste Ausschnitt ohne Raster
+        let taskBase64 = (taskImage ?? UIImage(cgImage: cg)).jpegBase64()
+        let system = PromptBuilder.system(grade: settings.grade, subject: subject)
 
         let running = Task { @MainActor in
             do {
-                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: [], solutions: solutions, taskRect: taskRect)
+                // Schritt 1 (nur ohne fertige Lösungen): lösen wie im Chat mit »Nur Antworten« –
+                // derselbe Weg, der dort in Sekunden klappt. Erst danach die Stellen suchen.
+                var known = knownSolutions
+                if known == nil {
+                    guard let taskBase64 else { throw AIError.empty }
+                    stage = .solving
+                    armWatchdog()
+                    let answer = try await AIRequest.text(system: system, user: QuickAction.quick.prompt, images: [taskBase64],
+                                                          settings: settings, effort: "medium",
+                                                          onText: { liveText = $0 },
+                                                          onStatus: { providerStatus = $0 })
+                    guard !Task.isCancelled else { return }
+                    solved = answer
+                    known = answer
+                    providerStatus = ""
+                }
+
+                // Schritt 2: die Lösungen an die passenden Stellen legen (wie »Im Zettel ausfüllen« aus dem Chat)
+                stage = .thinking
+                armWatchdog()
+                let user = HandwritingPrompts.worksheetUser(imageSize: pixelSize, ocr: [], solutions: known, taskRect: taskRect)
                 let raw = try await AIRequest.text(system: HandwritingPrompts.worksheetSystem, user: user, images: [base64],
                                                    settings: settings, effort: effort,
                                                    onText: { _ in if stage == .thinking { stage = .answering } },
@@ -300,11 +354,16 @@ struct WorksheetFillSheet: View {
             stage = .done
         }
         task = running
+    }
+
+    /// Zeitlimit für den laufenden Schritt (startet bei jedem Schritt neu).
+    private func armWatchdog() {
+        watchdog?.cancel()
         watchdog = Task { @MainActor in
             try? await Task.sleep(nanoseconds: timeout * 1_000_000_000)
             guard !Task.isCancelled else { return }
             timedOut = true
-            running.cancel()
+            task?.cancel()
             // Sofort Bescheid geben, auch wenn ein Schritt noch hängt
             error = "Das hat zu lange gedauert (über \(timeout) s). Versuch es nochmal – dann geht es schneller."
                 + (providerStatus.isEmpty ? "" : "\nZuletzt: \(providerStatus)")
