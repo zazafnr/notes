@@ -270,7 +270,7 @@ struct HandwritingWriteSheet: View {
         let bottom = layout.bounds.isNull ? 300 : layout.bounds.maxY + 40
         let size = CGSize(width: page.size.width, height: min(page.size.height, max(260, bottom)))
         preview = HandwritingInk.previewImage(layout, paper: paper, size: size, color: HandwritingInk.color,
-                                              penWidth: model.ink.penWidth, xHeight: xh, scale: 1.2)
+                                              xHeight: xh, scale: 1.2)
     }
 }
 

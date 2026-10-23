@@ -9,13 +9,23 @@ enum HandwritingInk {
     /// Die KI schreibt immer mit schwarzem Kuli, unabhängig von der gewählten Stiftfarbe.
     static let color = UIColor.black
 
-    /// Normaler Stift wie beim eigenen Schreiben (Monoline erschien auf dem iPad weiß statt schwarz).
+    /// Normaler Stift wie beim eigenen Schreiben.
     static let inkType: PKInkingTool.InkType = .pen
 
-    /// Strichstärke wie der eigene Stift auf »Fein« (2 pt): dünn, aber sicher sichtbar.
-    /// Darunter zeichnet PencilKit den Stift teils gar nicht mehr.
-    static func pointSize(penWidth: CGFloat, xHeight: Double) -> CGFloat {
-        2.2 * CGFloat(min(1.05, max(0.92, xHeight / 12.5)))
+    /// Sichtbare Strichbreite in Punkten bei x-Höhe 12,5: wie ein feiner Kuli, aber satt schwarz.
+    static let baseWidth: CGFloat = 1.5
+
+    /// Sichtbare Strichbreite der KI-Schrift; bei größerer Schrift minimal kräftiger.
+    static func strokeWidth(xHeight: Double) -> CGFloat {
+        baseWidth * CGFloat(min(1.1, max(0.9, xHeight / 12.5)))
+    }
+
+    /// PencilKit zeichnet selbst erzeugte Stift-Punkte nur 2 · (Größe − 2) pt breit – gemessen im iPad-Simulator
+    /// und auf dem Mac, gleich bei jedem Druck, Tempo, Winkel, Zoom und auch in Rundungen (CI-Lauf »Tinten-Messung«).
+    /// Größe 2 und weniger bleibt unsichtbar, 2,2 ist nur ein grauer Hauch; 2,75 ergibt 1,5 pt in reinem Schwarz.
+    /// Darum aus der gewünschten Breite zurückrechnen.
+    static func pointSize(forWidth width: CGFloat) -> CGFloat {
+        2 + max(1, width) / 2
     }
 
     /// Tinte immer im hellen Modus anlegen, damit Schwarz nicht für den Dunkelmodus umgerechnet wird.
@@ -27,19 +37,20 @@ enum HandwritingInk {
         return ink
     }
 
-    static func pkStroke(_ stroke: HWStroke, ink: PKInk, size: CGFloat, xHeight: Double, date: Date) -> PKStroke? {
+    /// `width`: sichtbare Strichbreite in Punkten.
+    static func pkStroke(_ stroke: HWStroke, ink: PKInk, width: CGFloat, xHeight: Double, date: Date) -> PKStroke? {
         let points = resample(stroke.points, step: max(0.8, xHeight * 0.09))
         guard points.count >= 2 else {
             guard let p = stroke.points.first else { return nil }
             return pkStroke(HWStroke(points: [p, CGPoint(x: p.x + 0.4, y: p.y + 0.4)], weight: stroke.weight),
-                            ink: ink, size: size, xHeight: xHeight, date: date)
+                            ink: ink, width: width, xHeight: xHeight, date: date)
         }
         let speed = baseSpeed * max(0.5, xHeight / 12.5)
         var distance: Double = 0
         var strokePoints: [PKStrokePoint] = []
         strokePoints.reserveCapacity(points.count)
         // Gleichmäßige Breite wie ein Kuli
-        let w = size * CGFloat(stroke.weight)
+        let w = pointSize(forWidth: width * CGFloat(stroke.weight))
         for (i, p) in points.enumerated() {
             if i > 0 { distance += hypot(Double(p.x - points[i - 1].x), Double(p.y - points[i - 1].y)) }
             // Voller Druck und volle Deckkraft: sattes Schwarz
@@ -50,10 +61,10 @@ enum HandwritingInk {
         return PKStroke(ink: ink, path: PKStrokePath(controlPoints: strokePoints, creationDate: date))
     }
 
-    static func pkStrokes(_ strokes: [HWStroke], color: UIColor, size: CGFloat, xHeight: Double) -> [PKStroke] {
+    static func pkStrokes(_ strokes: [HWStroke], color: UIColor, width: CGFloat, xHeight: Double) -> [PKStroke] {
         let ink = HandwritingInk.makeInk(color)
         let date = Date()
-        return strokes.compactMap { pkStroke($0, ink: ink, size: size, xHeight: xHeight, date: date) }
+        return strokes.compactMap { pkStroke($0, ink: ink, width: width, xHeight: xHeight, date: date) }
     }
 
     /// Gleichmäßig verteilte Punkte, damit die Kurve von PencilKit der Vorlage genau folgt.
@@ -79,10 +90,10 @@ enum HandwritingInk {
     /// Vorschaubild: Handschrift auf einem Stück Papier (für Einstellungen und Bestätigung).
     @MainActor
     static func previewImage(_ layout: HWLayout, paper: PaperStyle, size: CGSize, color: UIColor = .black,
-                             penWidth: CGFloat = 4, xHeight: Double, scale: CGFloat = 2) -> UIImage {
+                             xHeight: Double, scale: CGFloat = 2) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
-        let strokes = pkStrokes(layout.strokes, color: color, size: pointSize(penWidth: penWidth, xHeight: xHeight), xHeight: xHeight)
+        let strokes = pkStrokes(layout.strokes, color: color, width: strokeWidth(xHeight: xHeight), xHeight: xHeight)
         let drawing = PKDrawing(strokes: strokes)
         let rect = CGRect(origin: .zero, size: size)
         let inkImage = PageRenderer.ink(drawing, rect: rect, scale: scale)
@@ -101,7 +112,8 @@ final class HandwritingAnimator {
     private let strokes: [HWStroke]
     private let pkStrokes: [PKStroke?]
     private let color: UIColor
-    private let size: CGFloat
+    /// Sichtbare Strichbreite (Vorschau und fertige Striche gleich breit).
+    private let width: CGFloat
     private var starts: [Double] = []
     private var durations: [Double] = []
     private var committed = 0
@@ -124,14 +136,14 @@ final class HandwritingAnimator {
         return (CACurrentMediaTime() - startTime) * speed
     }
 
-    init(strokes: [HWStroke], color: UIColor, size: CGFloat, xHeight: Double, speed: Double) {
+    init(strokes: [HWStroke], color: UIColor, width: CGFloat, xHeight: Double, speed: Double) {
         self.strokes = strokes
         self.color = color
-        self.size = size
+        self.width = width
         self.speed = max(0.25, speed)
         let ink = HandwritingInk.makeInk(color)
         let date = Date()
-        pkStrokes = strokes.map { HandwritingInk.pkStroke($0, ink: ink, size: size, xHeight: xHeight, date: date) }
+        pkStrokes = strokes.map { HandwritingInk.pkStroke($0, ink: ink, width: width, xHeight: xHeight, date: date) }
         // Zeitplan: Strichlänge durch Tempo, dazwischen Stift absetzen und weiterführen
         let penSpeed = HandwritingInk.baseSpeed * max(0.5, xHeight / 12.5)
         var t = 0.0
@@ -154,7 +166,7 @@ final class HandwritingAnimator {
         undoBefore = host.canvas.drawing
         preview.fillColor = nil
         preview.strokeColor = color.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light)).cgColor
-        preview.lineWidth = size
+        preview.lineWidth = width
         preview.lineCap = .round
         preview.lineJoin = .round
         host.writingLayer.layer.addSublayer(preview)

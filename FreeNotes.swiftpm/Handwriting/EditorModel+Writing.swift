@@ -190,7 +190,7 @@ extension EditorModel {
         let total = writing?.pages ?? 1
         writing = WritingStatus(pages: total, page: min(total, total - Set(writingQueue.map(\.pageID)).count))
         let animator = HandwritingAnimator(strokes: part.strokes, color: HandwritingInk.color,
-                                           size: HandwritingInk.pointSize(penWidth: ink.penWidth, xHeight: part.xHeight),
+                                           width: HandwritingInk.strokeWidth(xHeight: part.xHeight),
                                            xHeight: part.xHeight, speed: HandwritingStore.shared.speed.factor ?? 4)
         animator.onFinish = { [weak self] in
             guard let self else { return }
@@ -224,7 +224,7 @@ extension EditorModel {
 
     private func writeDirectly(_ part: WritingPart) {
         let strokes = HandwritingInk.pkStrokes(part.strokes, color: HandwritingInk.color,
-                                               size: HandwritingInk.pointSize(penWidth: ink.penWidth, xHeight: part.xHeight),
+                                               width: HandwritingInk.strokeWidth(xHeight: part.xHeight),
                                                xHeight: part.xHeight)
         if let host, host.page.id == part.pageID {
             let before = host.canvas.drawing

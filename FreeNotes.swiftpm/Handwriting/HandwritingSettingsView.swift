@@ -109,7 +109,7 @@ struct HandwritingSettingsView: View {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1.6
         let strokes = HandwritingInk.pkStrokes(layout.strokes, color: InkSettings.penColors[0],
-                                               size: HandwritingInk.pointSize(penWidth: 4, xHeight: xh), xHeight: xh)
+                                               width: HandwritingInk.strokeWidth(xHeight: xh), xHeight: xh)
         let ink = PageRenderer.ink(PKDrawing(strokes: strokes), rect: CGRect(origin: .zero, size: size), scale: 1.6)
         preview = UIGraphicsImageRenderer(size: size, format: format).image { context in
             UIColor.white.setFill()
