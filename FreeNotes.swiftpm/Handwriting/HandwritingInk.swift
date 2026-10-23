@@ -9,11 +9,13 @@ enum HandwritingInk {
     /// Die KI schreibt immer mit schwarzem Kuli, unabhängig von der gewählten Stiftfarbe.
     static let color = UIColor.black
 
-    /// Strichstärke wie ein feiner Kuli; bei kleiner Schrift etwas dünner.
+    /// »Monoline« zeichnet genau die angegebene Breite wie ein Kuli. Der normale Stift (.pen) verändert die Breite
+    /// je nach Druck und ließ sehr dünne Striche nach dem Schreiben verschwinden.
+    static let inkType: PKInkingTool.InkType = .monoline
+
+    /// Strichstärke wie ein feiner Kuli; bei kleiner Schrift etwas dünner (nie unter 1,7 pt).
     static func pointSize(penWidth: CGFloat, xHeight: Double) -> CGFloat {
-        // PencilKit-Stift zeichnet bei gleicher Punktgröße deutlich kräftiger als erwartet: schmal halten
-        let base: CGFloat = 1.7
-        return base * CGFloat(min(1.1, max(0.8, xHeight / 12.5)))
+        max(1.7, 2.1 * CGFloat(min(1.1, max(0.8, xHeight / 12.5))))
     }
 
     static func pkStroke(_ stroke: HWStroke, ink: PKInk, size: CGFloat, xHeight: Double, date: Date) -> PKStroke? {
@@ -25,16 +27,13 @@ enum HandwritingInk {
         }
         let speed = baseSpeed * max(0.5, xHeight / 12.5)
         var distance: Double = 0
-        let total = max(length(points), 0.001)
         var strokePoints: [PKStrokePoint] = []
         strokePoints.reserveCapacity(points.count)
+        // Gleichmäßige Breite wie ein Kuli
+        let w = size * CGFloat(stroke.weight)
         for (i, p) in points.enumerated() {
             if i > 0 { distance += hypot(Double(p.x - points[i - 1].x), Double(p.y - points[i - 1].y)) }
-            let t = distance / total
-            // Am Anfang und Ende kaum merklich dünner, wie beim Aufsetzen und Abheben des Stifts
-            let taper = min(1, 0.9 + t * 2) * min(1, 0.93 + (1 - t) * 1.5)
-            let w = size * CGFloat(stroke.weight * taper)
-            // Voller Druck und volle Deckkraft: sattes Schwarz wie ein Kuli (wenig Druck macht den Pen-Strich heller)
+            // Voller Druck und volle Deckkraft: sattes Schwarz
             strokePoints.append(PKStrokePoint(location: p, timeOffset: distance / speed,
                                               size: CGSize(width: w, height: w), opacity: 1,
                                               force: 1, azimuth: 0, altitude: .pi / 2))
@@ -43,7 +42,7 @@ enum HandwritingInk {
     }
 
     static func pkStrokes(_ strokes: [HWStroke], color: UIColor, size: CGFloat, xHeight: Double) -> [PKStroke] {
-        let ink = PKInk(.pen, color: color)
+        let ink = PKInk(HandwritingInk.inkType, color: color)
         let date = Date()
         return strokes.compactMap { pkStroke($0, ink: ink, size: size, xHeight: xHeight, date: date) }
     }
@@ -121,7 +120,7 @@ final class HandwritingAnimator {
         self.color = color
         self.size = size
         self.speed = max(0.25, speed)
-        let ink = PKInk(.pen, color: color)
+        let ink = PKInk(HandwritingInk.inkType, color: color)
         let date = Date()
         pkStrokes = strokes.map { HandwritingInk.pkStroke($0, ink: ink, size: size, xHeight: xHeight, date: date) }
         // Zeitplan: Strichlänge durch Tempo, dazwischen Stift absetzen und weiterführen
