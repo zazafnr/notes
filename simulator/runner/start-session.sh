@@ -69,7 +69,7 @@ for i in $(seq 1 60); do
 done
 HOST=${URL#https://}
 for i in $(seq 1 30); do
-  IP=$(dig +short @1.1.1.1 "$HOST" A | grep -E '^[0-9.]+$' | head -1)
+  IP=$(dig +short @1.1.1.1 "$HOST" A 2>/dev/null | grep -E '^[0-9.]+$' | head -1 || true)
   if [ -n "$IP" ] && curl -fsS --max-time 5 --resolve "$HOST:443:$IP" "$URL/healthz" > /dev/null 2>&1; then
     echo "Tunnel erreichbar: $URL"
     break

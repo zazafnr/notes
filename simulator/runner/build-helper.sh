@@ -18,13 +18,24 @@ rm -rf "$PH" && mkdir -p "$PH" && cd "$PH"
 git init -q && git remote add origin https://github.com/cameroncooke/idb.git
 git fetch -q --depth 1 origin "$IDB_REF" && git checkout -q FETCH_HEAD -- PrivateHeaders || { echo "Header nicht geladen"; exit 1; }
 
+# Die Schnittstellen nennen Typen voll qualifiziert (»FBSimulatorControl.FBSimulator…«). Weil Modul und
+# Klasse »FBSimulatorControl« gleich heißen, versteht der Compiler das nicht. Deshalb eine Kopie der
+# Frameworks mit Schnittstellen ohne Modul-Präfix; die fertigen Binärmodule passen nur zur Swift-Version
+# von AXe und werden entfernt, damit der Compiler die Schnittstellen nimmt.
+FWC="$SIM_DIR/fw"
+rm -rf "$FWC" && cp -R "$FW" "$FWC"
+find "$FWC" -path '*.swiftmodule/*.swiftmodule' -delete
+for f in $(find "$FWC" -name '*.swiftinterface'); do
+  perl -pi -e 's/(?<![\w.])(FBSimulatorControl|FBControlCore|FBDeviceControl|XCTestBootstrap)\.(?=[A-Z_])//g unless /^\s*(\@_exported\s+)?(\@preconcurrency\s+)?import /' "$f"
+done
+
 INC=()
 for d in "" AccessibilityPlatformTranslation AXRuntime CoreSimDeviceIO CoreSimulator CoreSimulatorUtilities SimulatorKit; do
   INC+=("-I$PH/PrivateHeaders/$d")
 done
 
 xcrun swiftc -O -parse-as-library \
-  -F "$FW" "${INC[@]}" \
+  -F "$FWC" "${INC[@]}" \
   -Xlinker -rpath -Xlinker "$FW" \
   -Xlinker -undefined -Xlinker dynamic_lookup \
   "$HERE/simhelper.swift" -o "$SIM_DIR/simhelper" 2>&1 | grep -vE "warning: -undefined dynamic_lookup" | tail -40
