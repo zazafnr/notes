@@ -29,7 +29,7 @@ Windows-PC (PC-App)  ⇄  Cloudflare-Tunnel  ⇄  Cloud-Mac (GitHub Actions)
 ## Benutzen
 
 1. Geräte auswählen (iPhone, iPad oder beide), Modell, Profil, iOS-Version, App-Branch und Dauer.
-2. **▶︎ Starten**. Der Start dauert etwa 3–6 Minuten: Mac starten, App bauen, Simulatoren hochfahren.
+2. **▶︎ Starten**. Der Start dauert etwa 5–8 Minuten: Mac starten, App bauen, Simulatoren zum ersten Mal hochfahren.
 3. Für jedes Gerät öffnet sich ein Fenster.
 
 | Am PC | Am Gerät |
@@ -37,6 +37,8 @@ Windows-PC (PC-App)  ⇄  Cloudflare-Tunnel  ⇄  Cloud-Mac (GitHub Actions)
 | Linksklick / Ziehen | Tippen / Wischen, Zeichnen |
 | Maustaste gedrückt halten oder Rechtsklick | Langes Drücken (Kontextmenüs, Symbole verschieben) |
 | Mausrad | Scrollen |
+| Alt gedrückt halten + ziehen | Zwei Finger (Zoomen/Drehen, gespiegelt um die Bildschirmmitte) |
+| Strg + Mausrad | Zoom-Geste an der Mausposition |
 | Ziehen vom unteren Bildschirmrand nach oben | Home-Geste |
 | Tastatur (auch ä, ö, ü, ß, @, €) | Tastatur |
 | Strg+H / Strg+Umschalt+H | Home / App-Umschalter |
@@ -45,7 +47,7 @@ Windows-PC (PC-App)  ⇄  Cloudflare-Tunnel  ⇄  Cloud-Mac (GitHub Actions)
 | Strg+S | Bildschirmfoto (landet in *Bilder\iOS-Simulator*) |
 | Strg+V / Strg+C | Einsetzen bzw. Kopieren, mit der PC-Zwischenablage abgeglichen |
 
-In der Leiste rechts gibt es außerdem: Siri, Hell/Dunkel, Fotos hinzufügen, Link öffnen, App neu bauen, App-Daten sichern/laden, App-Protokoll (Konsolen-Ausgabe deiner App), Bildqualität, »Immer im Vordergrund«.
+In der Leiste rechts gibt es außerdem: Siri, Schütteln, Hell/Dunkel, Fotos hinzufügen, Link öffnen, App neu bauen, App-Daten sichern/laden, App-Protokoll (Konsolen-Ausgabe deiner App), Bildqualität, »Immer im Vordergrund«.
 
 **FreeNotes:** Im Simulator gibt es keinen Apple Pencil. Deshalb in FreeNotes **Mit dem Finger zeichnen** einschalten. Dann schreibt die Maus wie ein Stift.
 
@@ -62,7 +64,9 @@ Ein Profil macht einen Simulator deinem Gerät ähnlich:
 
 ## Was der Simulator nicht kann
 
-Kamera und Dokumentenscanner, Apple Pencil (Druck und Neigung), Face ID (nur simuliert), Telefonie, Push-Benachrichtigungen von Apple. Mehrfinger-Gesten wie Zwei-Finger-Zoom unterstützt die Steuerung noch nicht. Für diese Dinge braucht es das echte Gerät.
+Kamera und Dokumentenscanner, Apple Pencil (Druck und Neigung), Face ID (nur simuliert), Telefonie, Push-Benachrichtigungen von Apple. Für diese Dinge braucht es das echte Gerät.
+
+Das Bild kommt mit etwa 10–20 Bildern pro Sekunde und je nach Internetverbindung mit etwas Verzögerung an (der Mac steht in den USA). Zum Testen reicht das gut, für Spiele nicht.
 
 ## Kosten: Mac-Minuten
 
@@ -78,8 +82,8 @@ Das Repo ist privat. GitHub Free enthält 2.000 Actions-Minuten pro Monat, und M
 |---|---|
 | `.github/workflows/ios-simulator.yml` | Startet den Cloud-Mac: Xcode wählen, Simulatoren anlegen, App bauen, Tunnel öffnen |
 | `.github/workflows/simulator-desktop.yml` | Baut die Windows-App und legt sie als Release `simulator-latest` ab |
-| `simulator/runner/` | Skripte auf dem Mac: `boot.sh`, `build-app.sh`, `measure.py`, `start-session.sh` |
-| `simulator/server/` | Steuer-Server (Node): Bild-Stream über `axe stream-video`, Live-Touch über den HID-Broker von [AXe](https://github.com/cameroncooke/AXe), `simctl` für alles andere |
+| `simulator/runner/` | Skripte auf dem Mac: `boot.sh`, `build-app.sh`, `measure.py`, `start-session.sh`, `simhelper.swift` (Video aus dem Bildspeicher, Drehen, zwei Finger – gebaut gegen die Frameworks von AXe) |
+| `simulator/server/` | Steuer-Server (Node): Video über `simhelper` (Rückfall: `axe stream-video`), Live-Touch über den HID-Broker von [AXe](https://github.com/cameroncooke/AXe), `simctl` für alles andere |
 | `simulator/desktop/` | PC-App (Electron): Startfenster, Profile, Gerätefenster |
 | `simulator/test/` | Tests mit nachgebautem Mac (`server.test.js`, `ui-check.js`), GitHub-Ablauf (`github.test.js`) und Selbsttest auf dem echten Mac (`live-check.js`) |
 
