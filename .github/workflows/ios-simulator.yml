@@ -101,6 +101,14 @@ jobs:
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
       HOMEBREW_NO_ENV_HINTS: "1"
     steps:
+      # Das Repo ist öffentlich und damit auch die Logs: einen Selbsttest-Schlüssel aus den
+      # Eingaben sofort schwärzen. Gelesen aus der Ereignisdatei statt über ${{ }} – sonst
+      # stünde er schon im Kopf dieses Schritts im Klartext.
+      - name: Geheimes schwärzen
+        run: |
+          KEY=$(jq -r '.inputs.settings // "{}"' "$GITHUB_EVENT_PATH" | jq -r '.selftest // empty' 2>/dev/null || true)
+          [ -n "$KEY" ] && echo "::add-mask::$KEY" || true
+
       - uses: actions/checkout@v4
 
       - name: Start melden
