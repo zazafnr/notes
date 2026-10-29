@@ -1,9 +1,9 @@
 // simhelper: kleines Hilfsprogramm auf dem Cloud-Mac, gebaut gegen die Frameworks von AXe
 // (FBSimulatorControl). Kann, was die AXe-Befehle nicht anbieten:
 //
-//   simhelper stream --udid U [--fps 24] [--scale 0.5] [--quality 0.7]
-//       Echter Video-Strom des Simulator-Bildschirms im Minicap-Format auf stdout:
-//       24-Byte-Kopf, dann je Bild 4 Byte Länge (little endian) + JPEG.
+//   simhelper stream --udid U --src-width W --src-height H [--fps 24] [--scale 0.5] [--quality 0.7]
+//       Video-Strom des Simulator-Bildschirms (direkt aus dem Bildspeicher) im Minicap-Format auf
+//       stdout: 24-Byte-Kopf, dann je geändertem Bild 4 Byte Länge (little endian) + JPEG.
 //
 //   simhelper hid --udid U
 //       Liest JSON-Zeilen von stdin und antwortet je Zeile mit {"ok":true} oder {"error":"…"}:
@@ -14,6 +14,7 @@
 
 import Foundation
 import CoreGraphics
+import ImageIO
 import FBControlCore
 import FBSimulatorControl
 
@@ -58,35 +59,98 @@ final class StopFlag: @unchecked Sendable {
     func stop() { lock.lock(); stopped = true; lock.unlock() }
 }
 
+// Nimmt rohe BGRA-Bilder vom Framework entgegen (ohne Hardware-Encoder, den die Cloud-Macs nicht
+// haben), kodiert sie selbst als JPEG und schreibt sie im Minicap-Format auf stdout.
+final class JPEGFrameWriter: NSObject, FBDataConsumer {
+    let width: Int
+    let height: Int
+    let quality: Double
+    private var last: Data?
+    private var headerWritten = false
+    private var warned = false
+    private let out = FileHandle.standardOutput
+
+    init(width: Int, height: Int, quality: Double) {
+        self.width = width
+        self.height = height
+        self.quality = quality
+    }
+
+    func consumeData(_ data: Data) {
+        if let last, last == data { return } // unverändert: nichts senden
+        last = data
+        // Zeilenlänge: IOSurface-Puffer runden auf 64 Byte auf
+        var bytesPerRow = (width * 4 + 63) / 64 * 64
+        if bytesPerRow * height > data.count { bytesPerRow = data.count / height }
+        guard bytesPerRow >= width * 4, let provider = CGDataProvider(data: data as CFData),
+              let image = CGImage(
+                width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        else {
+            if !warned { log("Bild passt nicht: \(data.count) Bytes für \(width)×\(height)"); warned = true }
+            return
+        }
+        let jpeg = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(jpeg, "public.jpeg" as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return }
+
+        if !headerWritten {
+            var header = [UInt8](repeating: 0, count: 24)
+            header[0] = 1
+            header[1] = 24
+            withUnsafeBytes(of: UInt32(width).littleEndian) { header.replaceSubrange(6..<10, with: $0) }
+            withUnsafeBytes(of: UInt32(height).littleEndian) { header.replaceSubrange(10..<14, with: $0) }
+            out.write(Data(header))
+            headerWritten = true
+        }
+        var length = UInt32(jpeg.length).littleEndian
+        out.write(Data(bytes: &length, count: 4))
+        out.write(jpeg as Data)
+    }
+
+    func consumeEndOfFile() {}
+}
+
 @MainActor
 func runStream(_ simulator: FBSimulator) async throws {
     let fps = Int(option("fps") ?? "") ?? 24
     let scale = Double(option("scale") ?? "") ?? 0.5
     let quality = Double(option("quality") ?? "") ?? 0.7
+    guard let sourceWidth = Int(option("src-width") ?? ""), let sourceHeight = Int(option("src-height") ?? "") else {
+        throw HelperError("--src-width und --src-height fehlen")
+    }
+    let scaled = scale > 0 && scale < 1
+    let width = scaled ? Int((scale * Double(sourceWidth)).rounded(.down)) : sourceWidth
+    let height = scaled ? Int((scale * Double(sourceHeight)).rounded(.down)) : sourceHeight
     let configuration = FBVideoStreamConfiguration(
-        format: .minicap(),
+        format: .bgra(),
         framesPerSecond: NSNumber(value: fps),
         rateControl: .quality(NSNumber(value: quality)),
-        scaleFactor: NSNumber(value: scale),
+        scaleFactor: scaled ? NSNumber(value: scale) : nil,
         keyFrameRate: nil
     )
-    let consumer = FBFileWriter.syncWriter(withFileDescriptor: STDOUT_FILENO, closeOnEndOfFile: false)
+    let writer = JPEGFrameWriter(width: width, height: height, quality: quality)
     let stream = try await simulator.createStream(configuration: configuration)
-    try await stream.startStreamingAsync(consumer)
-    log("Stream läuft (\(fps) fps, Skalierung \(scale), Qualität \(quality))")
+    try await stream.startStreamingAsync(writer)
+    log("Stream läuft (\(fps) fps, \(width)×\(height), Qualität \(quality))")
 
     let flag = StopFlag()
+    var sources: [DispatchSourceSignal] = []
     for sig in [SIGINT, SIGTERM] {
         signal(sig, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
         source.setEventHandler { flag.stop() }
         source.resume()
-        objc_setAssociatedObject(stream, "signal-\(sig)", source, .OBJC_ASSOCIATION_RETAIN)
+        sources.append(source)
     }
     while !flag.isStopped {
         try? await Task.sleep(nanoseconds: 200_000_000)
     }
     try? await stream.stopStreamingAsync()
+    sources.forEach { $0.cancel() }
 }
 
 func orientation(_ name: String) throws -> FBSimulatorHIDDeviceOrientation {

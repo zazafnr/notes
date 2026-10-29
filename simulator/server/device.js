@@ -169,7 +169,8 @@ class Device {
     let frames = 0;
     if (this.helperStream) {
       proc = spawn(this.simhelper, ['stream', '--udid', this.udid, '--fps', String(fps),
-        '--quality', String(quality / 100), '--scale', String(scale)], { stdio: ['ignore', 'pipe', 'pipe'] });
+        '--quality', String(quality / 100), '--scale', String(scale),
+        '--src-width', String(this.info.pixelWidth), '--src-height', String(this.info.pixelHeight)], { stdio: ['ignore', 'pipe', 'pipe'] });
       parse = helper.minicapParser((f) => { frames++; this.onFrame(f); });
     } else {
       // Einzelbilder über AXe: je Bild 4 Byte Länge (BE) + JPEG
@@ -190,9 +191,24 @@ class Device {
     }
     this.stream = proc;
     proc.stdout.on('data', parse);
+    if (this.helperStream) {
+      // Hängt der Video-Helfer (kein erstes Bild), auf AXe-Einzelbilder umschalten.
+      setTimeout(() => {
+        if (this.stream === proc && frames === 0) {
+          this.log('simhelper liefert kein Bild, nutze AXe-Einzelbilder');
+          this.helperStream = false;
+          this.stream = null;
+          proc.kill('SIGKILL');
+          this.broadcast({ t: 'meta', device: this.describe() });
+          this.ensureStream();
+        }
+      }, Number(process.env.HELPER_FIRST_FRAME_MS || 20_000));
+    }
     proc.stderr.on('data', (d) => {
-      const text = d.toString().trim();
-      if (text && !/Captured \d+ frames/.test(text)) this.log(`stream: ${text}`);
+      for (const line of d.toString().split('\n')) {
+        const text = line.trim();
+        if (text && !/Captured \d+ frames|damage callbacks|CoreSimulator:|SimulatorKit:|Loaded All|SimDisplay Class/.test(text)) this.log(`stream: ${text}`);
+      }
     });
     proc.on('error', (err) => this.log(`stream startet nicht: ${err.message}`));
     proc.on('exit', (code) => {
