@@ -11,6 +11,7 @@ struct OpenNotebook: Identifiable {
 struct LibraryView: View {
     @EnvironmentObject private var store: LibraryStore
     @EnvironmentObject private var settings: AISettings
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var selection: SidebarItem? = .all
     @State private var openNotebook: OpenNotebook?
@@ -67,7 +68,24 @@ struct LibraryView: View {
         .onAppear {
             if !settings.hasOnboarded { showOnboarding = true }
         }
+        // Stella: gelöste HÜs abholen, solange kein Heft offen ist (beim Start, beim Zurückkommen, alle 5 Minuten)
+        .task {
+            while !Task.isCancelled {
+                if openNotebook == nil { await StellaSync.shared.sync(store: store) }
+                try? await Task.sleep(nanoseconds: 300_000_000_000)
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, openNotebook == nil {
+                Task { await StellaSync.shared.sync(store: store) }
+            }
+        }
+        .onChange(of: openNotebook?.id) { _, id in
+            StellaSync.shared.editorOpen = id != nil
+            if id == nil { Task { await StellaSync.shared.sync(store: store) } }
+        }
         .costToast()
+        .stellaToast()
     }
 
     private var currentSubjectID: UUID? {
