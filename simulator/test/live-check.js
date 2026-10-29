@@ -111,6 +111,19 @@ async function testDevice(dev) {
   check(`${role}: Bild kommt an`, state.frames >= 1, `${state.meta?.video}, ${state.frames} Bilder, ${state.last?.length ?? 0} Bytes, ${JSON.stringify(state.meta?.frame)}`);
   check(`${role}: flüssiges Bild (≥ 10 Bilder/s bei Bewegung)`, fps >= 10, `${fps.toFixed(1)} Bilder/s`);
   if (state.last) fs.writeFileSync(path.join(out, `${role}-stream.jpg`), state.last);
+  // Stream-Bild mit echtem Bildschirmfoto vergleichen (verzerrte Zeilen würden stark abweichen)
+  try {
+    await sleep(1500);
+    const still = state.last;
+    fs.writeFileSync(path.join(out, `${role}-vergleich-stream.jpg`), still);
+    await shot(role, `${role}-vergleich-foto`);
+    const res = execFileSync('python3', [path.join(__dirname, 'compare-images.py'),
+      path.join(out, `${role}-vergleich-stream.jpg`), path.join(out, `${role}-vergleich-foto.png`)], { encoding: 'utf8' }).trim();
+    const diff = Number(res.split(' ')[0]);
+    check(`${role}: Stream-Bild entspricht dem Bildschirm`, diff < 25, `Abweichung ${res}`);
+  } catch (err) {
+    check(`${role}: Stream-Bild entspricht dem Bildschirm`, false, err.message);
+  }
 
   // Home, dann das Einstellungen-Symbol suchen und über den Live-Touch-Weg antippen.
   state.ws.send(JSON.stringify({ t: 'button', b: 'home' }));

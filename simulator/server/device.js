@@ -12,11 +12,19 @@ const { run, jpegSize } = require('./util');
 const keys = require('./keys');
 
 // fps/quality/scale für simhelper (echtes Video); AXe macht Einzelbilder und schafft weniger fps.
+// Das iPad hat fast doppelt so viele Pixel, deshalb dort kleiner skalieren.
 const QUALITY = {
-  schnell: { fps: 30, quality: 55, scale: 0.4 },
-  normal: { fps: 24, quality: 70, scale: 0.5 },
-  scharf: { fps: 15, quality: 82, scale: 0.75 },
+  schnell: { fps: 30, quality: 55, scale: 0.4, scaleIpad: 0.3 },
+  normal: { fps: 24, quality: 70, scale: 0.5, scaleIpad: 0.4 },
+  scharf: { fps: 15, quality: 82, scale: 0.75, scaleIpad: 0.55 },
 };
+
+// Skalierung so wählen, dass die Bildbreite ein Vielfaches von 16 Pixeln ist: dann hat jede Zeile
+// der Rohdaten genau Breite × 4 Byte und simhelper kann die Zeilen nicht falsch zuordnen.
+function alignedScale(scale, width) {
+  const target = Math.max(16, Math.floor((scale * width) / 16) * 16);
+  return (target + 0.5) / width;
+}
 
 // Reihenfolge im Uhrzeigersinn, Namen wie in AXe (OrientationCoordinateMath).
 const CLOCKWISE = ['portrait', 'landscape', 'portraitUpsideDown', 'landscapeFlipped'];
@@ -162,14 +170,16 @@ class Device {
 
   ensureStream() {
     if (this.stream || this.clients.size === 0) return;
-    const { fps, quality, scale } = QUALITY[this.quality];
+    const preset = QUALITY[this.quality];
+    const { fps, quality } = preset;
+    const scale = this.role === 'ipad' ? preset.scaleIpad : preset.scale;
     let proc;
     let parse;
     const startedAt = Date.now();
     let frames = 0;
     if (this.helperStream) {
       proc = spawn(this.simhelper, ['stream', '--udid', this.udid, '--fps', String(fps),
-        '--quality', String(quality / 100), '--scale', String(scale),
+        '--quality', String(quality / 100), '--scale', alignedScale(scale, this.info.pixelWidth).toFixed(6),
         '--src-width', String(this.info.pixelWidth), '--src-height', String(this.info.pixelHeight)], { stdio: ['ignore', 'pipe', 'pipe'] });
       parse = helper.minicapParser((f) => { frames++; this.onFrame(f); });
     } else {
@@ -536,4 +546,4 @@ class Device {
   }
 }
 
-module.exports = { Device, QUALITY };
+module.exports = { Device, QUALITY, alignedScale };
