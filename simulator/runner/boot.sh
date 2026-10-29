@@ -48,6 +48,27 @@ def pick(role, requested, types):
     pool = pro13 or pro11 or candidates
     return max(pool, key=lambda t: number(t["name"].split("(")[-1]))
 
+# Bildschirmmaße aus dem Gerätetyp; ab Xcode 27 stehen sie nicht mehr sicher in profile.plist.
+# Fehlen sie, misst measure.py sie nach dem Start am laufenden Gerät.
+def screen_info(bundle_path):
+    found = {}
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in ("mainScreenWidth", "mainScreenHeight", "mainScreenScale") and isinstance(v, (int, float)):
+                    found.setdefault(k, v)
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+    resources = os.path.join(bundle_path, "Contents", "Resources")
+    for name in ("profile.plist", "capabilities.plist"):
+        try:
+            walk(plistlib.load(open(os.path.join(resources, name), "rb")))
+        except Exception:
+            pass
+    return found
+
 # Neueste Runtime, die alle gewünschten Gerätearten kann (manche Punkt-Releases haben nur ein Gerät).
 runtime = None
 for r in reversed(ios):
@@ -64,8 +85,7 @@ for role in roles:
     t = pick(role, requested, runtime["supportedDeviceTypes"])
     name = "PC-iPhone" if role == "iphone" else "PC-iPad"
     udid = subprocess.check_output(["xcrun", "simctl", "create", name, t["identifier"], runtime["identifier"]], text=True).strip()
-    profile = os.path.join(t["bundlePath"], "Contents", "Resources", "profile.plist")
-    screen = plistlib.load(open(profile, "rb"))
+    screen = screen_info(t["bundlePath"])
     # Sprache und Region schon vor dem ersten Start setzen, damit auch der Home-Bildschirm deutsch ist.
     prefs_dir = os.path.expanduser(f"~/Library/Developer/CoreSimulator/Devices/{udid}/data/Library/Preferences")
     os.makedirs(prefs_dir, exist_ok=True)
@@ -85,11 +105,11 @@ for role in roles:
         "model": t["name"],
         "runtime": runtime["identifier"],
         "runtimeName": runtime["name"],
-        "scale": screen.get("mainScreenScale", 3 if role == "iphone" else 2),
-        "pixelWidth": screen["mainScreenWidth"],
-        "pixelHeight": screen["mainScreenHeight"],
+        "scale": screen.get("mainScreenScale"),
+        "pixelWidth": screen.get("mainScreenWidth"),
+        "pixelHeight": screen.get("mainScreenHeight"),
     })
-    print(f"{role}: {t['name']} → {udid} ({screen['mainScreenWidth']}×{screen['mainScreenHeight']} @{screen.get('mainScreenScale')}x)")
+    print(f"{role}: {t['name']} → {udid} ({screen.get('mainScreenWidth')}×{screen.get('mainScreenHeight')} @{screen.get('mainScreenScale')}x)")
 
 json.dump(devices, open(os.path.join(sim_dir, "devices.json"), "w"), indent=2)
 PY

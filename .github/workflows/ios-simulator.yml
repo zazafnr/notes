@@ -162,6 +162,9 @@ jobs:
           axe --version || axe --help | head -3
           cloudflared --version
 
+      - name: Bildschirme vermessen
+        run: python3 simulator/runner/measure.py
+
       - name: Sitzung öffnen
         run: |
           simulator/runner/status.sh pending "Verbinde"
