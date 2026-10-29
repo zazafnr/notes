@@ -135,6 +135,7 @@ function applyMeta(d) {
     if (canvas.width !== size.w || canvas.height !== size.h) {
       canvas.width = size.w;
       canvas.height = size.h;
+      if (lastFrame) drawFrame(lastFrame);
     }
   }
   const q = QUALITIES.find(([k]) => k === d.quality);
@@ -146,7 +147,9 @@ function applyMeta(d) {
 // Bilder entpacken, ohne sich zu stauen: nur das neueste wartende Bild wird gezeichnet.
 let decoding = false;
 let pendingFrame = null;
+let lastFrame = null; // zum Neuzeichnen, wenn sich die Zeichenfläche ändert (Drehen)
 async function drawFrame(buf) {
+  lastFrame = buf;
   if (decoding) { pendingFrame = buf; return; }
   decoding = true;
   try {

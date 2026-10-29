@@ -73,7 +73,7 @@ function publicConfig() {
 function gh() {
   const token = getToken();
   if (!token) throw new Error('Bitte zuerst ein GitHub-Token eintragen.');
-  return new GitHub({ token, repo: config.repo });
+  return new GitHub({ token, repo: config.repo, api: process.env.SIM_GITHUB_API || undefined });
 }
 
 function monthKey() {
@@ -201,7 +201,17 @@ function profileById(id) {
 
 async function onReady({ url, runUrl, runId }) {
   Object.assign(session, { url, runUrl, runId, phase: 'ready', readyAt: Date.now() });
-  const info = await serverApi('GET', '/api/info');
+  // Die neue Tunnel-Adresse braucht manchmal ein paar Sekunden, bis sie überall auflöst.
+  let info = null;
+  for (let attempt = 1; !info; attempt++) {
+    try {
+      info = await serverApi('GET', '/api/info');
+    } catch (err) {
+      if (attempt >= 20 || session.ended) throw err;
+      emit('session:progress', { phase: 'connecting', text: `Verbinde mit dem Cloud-Mac … (Versuch ${attempt})` });
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
   session.info = info;
   emit('session:ready', { url, runUrl, info });
   for (const device of info.devices) openDeviceWindow(device);
@@ -357,7 +367,7 @@ handle('config:set', (e, patch) => {
   return publicConfig();
 });
 handle('token:set', async (e, { token, repo }) => {
-  const g = new GitHub({ token: token.trim(), repo: (repo || config.repo).trim() });
+  const g = new GitHub({ token: token.trim(), repo: (repo || config.repo).trim(), api: process.env.SIM_GITHUB_API || undefined });
   const repoInfo = await g.check();
   await g.branches();
   config.repo = repoInfo.name;

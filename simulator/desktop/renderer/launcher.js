@@ -2,7 +2,7 @@
 // Startfenster: Einrichtung, Geräte- und Profilauswahl, Fortschritt der Sitzung.
 
 const $ = (sel) => document.querySelector(sel);
-const sim = window.sim;
+// `sim` ist die Brücke aus preload.js (window.sim).
 let cfg = null;
 let branches = [];
 let timerHandle = null;
@@ -63,7 +63,7 @@ function fillProfiles() {
     const el = document.createElement('div');
     el.className = 'profile';
     const title = document.createElement('b');
-    title.textContent = `${p.kind === 'ipad' ? '▭' : '▯'} ${p.name}`;
+    title.textContent = p.name;
     const sub = document.createElement('span');
     sub.className = 'muted small';
     const bits = [p.model && p.model !== 'auto' ? p.model : (p.kind === 'ipad' ? 'iPad' : 'iPhone'), p.appearance === 'dark' ? 'Dunkel' : 'Hell'];
@@ -162,7 +162,7 @@ async function showRunning() {
   box.innerHTML = '';
   for (const d of devs) {
     const b = document.createElement('button');
-    b.textContent = d.role === 'iphone' ? '▯ iPhone zeigen' : '▭ iPad zeigen';
+    b.textContent = d.role === 'iphone' ? 'iPhone-Fenster zeigen' : 'iPad-Fenster zeigen';
     b.addEventListener('click', () => sim.showDevices());
     box.append(b);
   }

@@ -44,13 +44,6 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
-      - name: Als Artefakt ablegen
-        uses: actions/upload-artifact@v4
-        with:
-          name: iOS-Simulator-Windows
-          path: |
-            simulator/desktop/dist/*.exe
-
       - name: Release »simulator-latest« erneuern
         env:
           GH_TOKEN: ${{ github.token }}

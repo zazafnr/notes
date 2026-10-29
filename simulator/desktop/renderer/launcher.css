@@ -136,7 +136,7 @@ label.check input { width: auto; margin-top: 3px; }
 .device-card:not(:has(input:checked)) { opacity: 0.55; }
 .device-card > input { width: 20px; height: 20px; flex: none; accent-color: var(--accent); margin: 0; }
 .device-body { flex: 1; min-width: 0; }
-.device-art { flex: none; background: #1d1d1f; border-radius: 16px; padding: 4px; position: relative; }
+.device-art { flex: none; background: #1d1d1f; border-radius: 16px; padding: 4px; position: relative; box-shadow: 0 0 0 1px rgba(128, 128, 128, 0.35); }
 .device-art span { display: block; width: 100%; height: 100%; border-radius: 12px; background: linear-gradient(160deg, #5e8bff, #9a6bff 60%, #ff8ec7); }
 .device-art.phone { width: 54px; height: 108px; border-radius: 14px; }
 .device-art.phone span { border-radius: 11px; }
@@ -215,3 +215,7 @@ dialog {
 dialog::backdrop { background: rgba(0, 0, 0, 0.35); backdrop-filter: blur(3px); }
 dialog[open] { animation: pop 0.18s ease; }
 @keyframes pop { from { transform: scale(0.97); opacity: 0; } }
+
+#start { display: flex; flex-direction: column; gap: 16px; }
+#start .msg { margin: 0; }
+button { white-space: nowrap; }

@@ -119,11 +119,6 @@ jobs:
           sudo xcode-select -s "$XC"
           xcodebuild -version
 
-      - name: Simulatoren anlegen
-        run: |
-          simulator/runner/status.sh pending "Lege Simulatoren an"
-          simulator/runner/boot.sh
-
       - name: App-Branch holen
         if: inputs.app_ref != ''
         uses: actions/checkout@v4
@@ -131,6 +126,11 @@ jobs:
           ref: ${{ inputs.app_ref }}
           path: app
           fetch-depth: 1
+
+      - name: Simulatoren anlegen
+        run: |
+          simulator/runner/status.sh pending "Lege Simulatoren an"
+          simulator/runner/boot.sh
 
       - name: App bauen
         if: inputs.app_ref != ''
