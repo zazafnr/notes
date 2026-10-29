@@ -1,0 +1,39 @@
+#!/usr/bin/env node
+// Nachgebauter simhelper für Tests: Minicap-Strom und HID-Befehle werden in $MOCK_LOG notiert.
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const udid = args[args.indexOf('--udid') + 1];
+const record = (entry) => fs.appendFileSync(process.env.MOCK_LOG, JSON.stringify(entry) + '\n');
+
+if (args[0] === 'stream') {
+  record({ cmd: 'simhelper-stream', udid, args });
+  const header = Buffer.alloc(24);
+  header[0] = 1;
+  header[1] = 24;
+  process.stdout.write(header);
+  const tick = () => {
+    const jpg = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'portrait.jpg'));
+    const len = Buffer.alloc(4);
+    len.writeUInt32LE(jpg.length);
+    process.stdout.write(Buffer.concat([len, jpg]));
+  };
+  tick();
+  setInterval(tick, 50);
+  process.on('SIGINT', () => process.exit(0));
+} else if (args[0] === 'hid') {
+  process.stdout.write('{"ready":true}\n');
+  let buf = '';
+  process.stdin.on('data', (d) => {
+    buf += d;
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      const cmd = JSON.parse(line);
+      record({ cmd: 'simhelper-hid', udid, command: cmd });
+      process.stdout.write(cmd.op === 'kaputt' ? '{"error":"geht nicht"}\n' : '{"ok":true}\n');
+    }
+  });
+}

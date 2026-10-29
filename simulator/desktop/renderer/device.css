@@ -1,0 +1,206 @@
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  color: #f5f5f7;
+  user-select: none;
+}
+body { display: flex; }
+.hidden { display: none !important; }
+
+#stage {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: drag;
+}
+
+/* Gehäuse: Maße setzt device.js über CSS-Variablen */
+.device {
+  position: relative;
+  width: var(--dev-w);
+  height: var(--dev-h);
+  padding: var(--bezel);
+  border-radius: var(--outer-r);
+  background:
+    linear-gradient(145deg, #4b4b50 0%, #2a2a2e 18%, #1b1b1e 50%, #2a2a2e 82%, #55555a 100%);
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.18),
+    inset 0 0 0 calc(var(--bezel) * 0.42) #0b0b0c,
+    0 18px 40px rgba(0, 0, 0, 0.45);
+  transition: width 0.25s ease, height 0.25s ease;
+}
+.device.ipad {
+  background: linear-gradient(145deg, #8e8e93 0%, #3a3a3c 12%, #1c1c1e 50%, #3a3a3c 88%, #8e8e93 100%);
+}
+
+.screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--inner-r);
+  overflow: hidden;
+  background: #000;
+  -webkit-app-region: no-drag;
+  cursor: default;
+  touch-action: none;
+}
+.screen.touching { cursor: grabbing; }
+canvas { width: 100%; height: 100%; display: block; }
+
+.cutout {
+  position: absolute;
+  background: #000;
+  pointer-events: none;
+  border-radius: 999px;
+}
+.cutout.notch { border-radius: 0 0 22px 22px; }
+.cutout::after {
+  content: "";
+  position: absolute;
+  width: var(--lens, 10px);
+  height: var(--lens, 10px);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #2b3a5a, #0a0d14 60%);
+  top: 50%;
+  right: 22%;
+  transform: translateY(-50%);
+}
+.cutout.vertical::after { right: auto; left: 50%; top: 22%; transform: translateX(-50%); }
+
+.side-button {
+  position: absolute;
+  background: linear-gradient(90deg, #2a2a2e, #4a4a4f);
+  border-radius: 2px;
+  -webkit-app-region: no-drag;
+}
+.side-button.power { right: calc(var(--side) * -1); top: 26%; width: var(--side); height: 12%; cursor: pointer; }
+.side-button.vol-up { left: calc(var(--side) * -1); top: 20%; width: var(--side); height: 7%; }
+.side-button.vol-down { left: calc(var(--side) * -1); top: 29%; width: var(--side); height: 7%; }
+.device.ipad .side-button.power { top: calc(var(--side) * -1); right: 10%; width: 8%; height: var(--side); }
+.device.ipad .side-button.vol-up { left: auto; right: calc(var(--side) * -1); top: 8%; width: var(--side); height: 6%; }
+.device.ipad .side-button.vol-down { left: auto; right: calc(var(--side) * -1); top: 15%; width: var(--side); height: 6%; }
+.device.landscape .side-button { display: none; }
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  text-align: center;
+  padding: 20px;
+  transition: opacity 0.3s ease;
+}
+.overlay.gone { opacity: 0; pointer-events: none; }
+.overlay-box { max-width: 80%; }
+.spinner {
+  width: 28px; height: 28px; margin: 0 auto 12px; border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.25); border-top-color: #fff;
+  animation: spin 0.9s linear infinite;
+}
+.overlay.error .spinner { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.toolbar {
+  width: 56px;
+  margin: 8px 4px 8px 4px;
+  padding: 8px 6px;
+  border-radius: 16px;
+  background: rgba(28, 28, 30, 0.88);
+  backdrop-filter: blur(20px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -webkit-app-region: drag;
+  align-self: center;
+  max-height: calc(100% - 16px);
+}
+.toolbar button {
+  -webkit-app-region: no-drag;
+  width: 40px;
+  height: 34px;
+  flex: none;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #f5f5f7;
+  font: 17px/1 "Segoe UI Symbol", "Segoe UI Emoji", system-ui, sans-serif;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.08s ease;
+}
+.toolbar button:hover { background: rgba(255, 255, 255, 0.12); }
+.toolbar button:active { transform: scale(0.92); }
+.toolbar button.on { background: #0a84ff; }
+.toolbar #btn-quality { font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
+.toolbar hr { width: 28px; border: 0; border-top: 1px solid rgba(255, 255, 255, 0.14); margin: 4px 0; flex: none; }
+.latency { font-size: 10px; color: #98989f; margin-top: 4px; flex: none; text-align: center; }
+
+.toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(calc(-50% - 30px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  pointer-events: none;
+  z-index: 5;
+}
+.toast {
+  background: rgba(28, 28, 30, 0.92);
+  backdrop-filter: blur(16px);
+  padding: 8px 14px;
+  border-radius: 12px;
+  max-width: 340px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  animation: rise 0.2s ease;
+}
+.toast.error { background: rgba(160, 30, 25, 0.95); }
+@keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+
+.logs {
+  position: fixed;
+  left: 10px;
+  right: 72px;
+  bottom: 10px;
+  height: 40%;
+  background: rgba(20, 20, 22, 0.95);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  z-index: 6;
+  -webkit-app-region: no-drag;
+}
+.logs-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; }
+.logs-head button { background: transparent; border: 0; color: #fff; cursor: pointer; }
+.logs pre { flex: 1; margin: 0; padding: 0 10px 10px; overflow: auto; font: 11px/1.35 Consolas, monospace; white-space: pre-wrap; user-select: text; }
+
+.menu {
+  position: fixed;
+  right: 70px;
+  background: rgba(36, 36, 38, 0.97);
+  border-radius: 12px;
+  padding: 6px;
+  min-width: 200px;
+  z-index: 7;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  -webkit-app-region: no-drag;
+}
+.menu button { display: block; width: 100%; text-align: left; background: transparent; border: 0; color: #fff; padding: 8px 10px; border-radius: 8px; font: inherit; cursor: pointer; }
+.menu button:hover { background: #0a84ff; }
+.menu input { width: 100%; padding: 7px 9px; border-radius: 8px; border: 0; background: #1c1c1e; color: #fff; font: inherit; margin: 2px 0 6px; outline: none; }
+
+/* Unsichtbares Feld, das die Tastatur des PCs aufnimmt (auch Umlaute, AltGr und tote Tasten) */
+.keys { position: fixed; left: -100px; top: 0; width: 10px; height: 10px; opacity: 0; }

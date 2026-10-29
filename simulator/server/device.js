@@ -7,17 +7,28 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { HidBroker } = require('./hid');
+const helper = require('./helper');
 const { run, jpegSize } = require('./util');
 const keys = require('./keys');
 
+// fps/quality/scale für simhelper (echtes Video); AXe macht Einzelbilder und schafft weniger fps.
 const QUALITY = {
-  schnell: { fps: 20, quality: 55, scale: 0.4 },
-  normal: { fps: 15, quality: 70, scale: 0.5 },
-  scharf: { fps: 10, quality: 82, scale: 0.75 },
+  schnell: { fps: 30, quality: 55, scale: 0.4 },
+  normal: { fps: 24, quality: 70, scale: 0.5 },
+  scharf: { fps: 15, quality: 82, scale: 0.75 },
 };
 
 // Reihenfolge im Uhrzeigersinn, Namen wie in AXe (OrientationCoordinateMath).
 const CLOCKWISE = ['portrait', 'landscape', 'portraitUpsideDown', 'landscapeFlipped'];
+// Ausrichtung für das HID-Ereignis (UIDeviceOrientation: »Landscape Left« = gegen den Uhrzeigersinn)
+const ORIENTATION_HID = {
+  portrait: 'portrait',
+  landscape: 'landscapeRight',
+  portraitUpsideDown: 'portraitUpsideDown',
+  landscapeFlipped: 'landscapeLeft',
+};
+// Drehung, mit der ein Bild im Hochformat des Geräts aufrecht angezeigt wird
+const VIEW_ROTATION = { portrait: 0, landscape: 90, portraitUpsideDown: 0, landscapeFlipped: -90 };
 const ORIENTATION_MENU = {
   portrait: 'Portrait',
   landscape: 'Landscape Right',
@@ -26,7 +37,7 @@ const ORIENTATION_MENU = {
 };
 
 class Device {
-  constructor(info, { axe = 'axe', log }) {
+  constructor(info, { axe = 'axe', simhelper = process.env.SIMHELPER, log }) {
     this.info = info; // { role, udid, name, model, runtime, scale, pixelWidth, pixelHeight }
     this.role = info.role;
     this.udid = info.udid;
@@ -42,6 +53,11 @@ class Device {
     this.lastFrame = null;
     this.frameSize = null;
     this.hid = new HidBroker(this.udid, { axe, log: this.log });
+    this.simhelper = simhelper && helper.available(simhelper) ? simhelper : null;
+    this.helperStream = !!this.simhelper;
+    this.helperHid = this.simhelper ? new helper.HelperHid(this.simhelper, this.udid, this.log) : null;
+    this.pinching = false;
+    this.inputChain = Promise.resolve();
     this.touchDown = false;
     this.textBuffer = '';
     this.textTimer = null;
@@ -61,7 +77,18 @@ class Device {
       orientation: this.orientation,
       quality: this.quality,
       frame: this.frameSize,
+      rotateView: this.rotateView(),
+      video: this.helperStream ? 'video' : 'einzelbilder',
+      features: { rotate: true, pinch: !!this.helperHid, shake: !!this.helperHid },
     };
+  }
+
+  // Liefert der Strom Bilder im Hochformat, obwohl das Gerät quer liegt, dreht die PC-App die Anzeige.
+  rotateView() {
+    if (!this.frameSize) return 0;
+    const landscapeFrame = this.frameSize.w > this.frameSize.h;
+    const landscapeDevice = this.orientation === 'landscape' || this.orientation === 'landscapeFlipped';
+    return landscapeFrame === landscapeDevice ? 0 : VIEW_ROTATION[this.orientation];
   }
 
   // ---------- Clients ----------
@@ -76,7 +103,11 @@ class Device {
       if (isBinary) return;
       let msg;
       try { msg = JSON.parse(data.toString('utf8')); } catch { return; }
-      this.handle(ws, msg).catch((err) => this.sendJson(ws, { t: 'toast', level: 'error', msg: err.message }));
+      if (msg.t === 'ping') return this.sendJson(ws, { t: 'pong', id: msg.id });
+      // Eingaben strikt der Reihe nach, sonst überholt z. B. Enter den Text davor.
+      this.inputChain = this.inputChain
+        .then(() => this.handle(ws, msg))
+        .catch((err) => this.sendJson(ws, { t: 'toast', level: 'error', msg: err.message }));
     });
     ws.on('close', () => {
       this.clients.delete(ws);
@@ -110,6 +141,8 @@ class Device {
       case 'text': return this.typeText(msg.s);
       case 'key': return this.key(msg.k, msg.mods || {});
       case 'button': return this.button(msg.b, !!msg.long);
+      case 'pinch': return this.pinch(msg.p, msg.x, msg.y);
+      case 'zoom': return this.zoom(msg.x, msg.y, msg.scale);
       case 'quality': return this.setQuality(msg.q);
       case 'logs': return msg.on ? this.startLogs(ws) : this.logClients.delete(ws);
       case 'ping': return this.sendJson(ws, { t: 'pong', id: msg.id });
@@ -130,21 +163,33 @@ class Device {
   ensureStream() {
     if (this.stream || this.clients.size === 0) return;
     const { fps, quality, scale } = QUALITY[this.quality];
-    const args = ['stream-video', '--udid', this.udid, '--format', 'raw',
-      '--fps', String(fps), '--quality', String(quality), '--scale', String(scale)];
-    const proc = spawn(this.axe, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let proc;
+    let parse;
+    const startedAt = Date.now();
+    let frames = 0;
+    if (this.helperStream) {
+      proc = spawn(this.simhelper, ['stream', '--udid', this.udid, '--fps', String(fps),
+        '--quality', String(quality / 100), '--scale', String(scale)], { stdio: ['ignore', 'pipe', 'pipe'] });
+      parse = helper.minicapParser((f) => { frames++; this.onFrame(f); });
+    } else {
+      // Einzelbilder über AXe: je Bild 4 Byte Länge (BE) + JPEG
+      proc = spawn(this.axe, ['stream-video', '--udid', this.udid, '--format', 'raw',
+        '--fps', String(Math.min(fps, 15)), '--quality', String(quality), '--scale', String(scale)], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let buf = Buffer.alloc(0);
+      parse = (chunk) => {
+        buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
+        while (buf.length >= 4) {
+          const len = buf.readUInt32BE(0);
+          if (len > 20_000_000) { buf = Buffer.alloc(0); break; }
+          if (buf.length < 4 + len) break;
+          frames++;
+          this.onFrame(Buffer.from(buf.subarray(4, 4 + len)));
+          buf = buf.subarray(4 + len);
+        }
+      };
+    }
     this.stream = proc;
-    let buf = Buffer.alloc(0);
-    proc.stdout.on('data', (chunk) => {
-      buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
-      while (buf.length >= 4) {
-        const len = buf.readUInt32BE(0);
-        if (len > 20_000_000) { buf = Buffer.alloc(0); break; }
-        if (buf.length < 4 + len) break;
-        this.onFrame(Buffer.from(buf.subarray(4, 4 + len)));
-        buf = buf.subarray(4 + len);
-      }
-    });
+    proc.stdout.on('data', parse);
     proc.stderr.on('data', (d) => {
       const text = d.toString().trim();
       if (text && !/Captured \d+ frames/.test(text)) this.log(`stream: ${text}`);
@@ -153,6 +198,12 @@ class Device {
     proc.on('exit', (code) => {
       if (this.stream !== proc) return;
       this.stream = null;
+      // Liefert simhelper gar keine Bilder, bleibt es bei AXe-Einzelbildern.
+      if (this.helperStream && frames === 0 && Date.now() - startedAt < 20_000) {
+        this.log('simhelper-Video geht nicht, nutze AXe-Einzelbilder');
+        this.helperStream = false;
+        this.broadcast({ t: 'meta', device: this.describe() });
+      }
       if (this.clients.size === 0) return;
       const now = Date.now();
       this.streamFailures = this.streamFailures.filter((t) => now - t < 30_000);
@@ -175,10 +226,6 @@ class Device {
     this.lastFrame = { data, hash };
     if (size && (!this.frameSize || size.w !== this.frameSize.w || size.h !== this.frameSize.h)) {
       this.frameSize = size;
-      // Bild im Querformat, obwohl das Gerät hochkant gebaut ist: es wurde gedreht.
-      const landscapeFrame = size.w > size.h;
-      const landscapeState = this.orientation === 'landscape' || this.orientation === 'landscapeFlipped';
-      if (landscapeFrame !== landscapeState) this.orientation = landscapeFrame ? 'landscapeFlipped' : 'portrait';
       this.broadcast({ t: 'meta', device: this.describe() });
     }
     for (const ws of this.clients) this.sendFrame(ws, this.lastFrame);
@@ -277,7 +324,29 @@ class Device {
     }
   }
 
+  // Zwei Finger, gespiegelt um die Bildschirmmitte (wie Alt+Ziehen im Simulator auf dem Mac).
+  async pinch(phase, nx, ny) {
+    if (!this.helperHid) throw new Error('Zwei-Finger-Gesten gehen in dieser Sitzung nicht');
+    if (phase === 'move' && !this.pinching) return;
+    const f1 = this.toPhysical(nx, ny);
+    const f2 = this.toPhysical(1 - nx, 1 - ny);
+    this.pinching = phase !== 'up';
+    return this.helperHid.send({ op: 'two', dir: phase === 'up' ? 'up' : 'down', x1: f1.x, y1: f1.y, x2: f2.x, y2: f2.y });
+  }
+
+  // Strg+Mausrad: Zoom-Geste an der Mausposition
+  async zoom(nx, ny, scale) {
+    if (!this.helperHid) throw new Error('Zoomen geht in dieser Sitzung nicht');
+    const p = this.toPhysical(nx, ny);
+    const s = Math.max(0.3, Math.min(3, Number(scale) || 1));
+    return this.helperHid.send({ op: 'pinch', x: p.x, y: p.y, scale: s, duration: 0.35, radius: Math.min(this.pointWidth, this.pointHeight) * 0.12 });
+  }
+
   async button(name, long) {
+    if (name === 'shake') {
+      if (!this.helperHid) throw new Error('Schütteln geht in dieser Sitzung nicht');
+      return this.helperHid.send({ op: 'shake' });
+    }
     if (name === 'app-switcher') {
       // Wischen vom unteren Rand nach oben und kurz halten, wie auf Face-ID-Geräten.
       const prims = [];
@@ -305,6 +374,16 @@ class Device {
   async rotate(dir) {
     const i = CLOCKWISE.indexOf(this.orientation);
     const target = dir === 'left' ? CLOCKWISE[(i + 3) % 4] : CLOCKWISE[(i + 1) % 4];
+    if (this.helperHid) {
+      try {
+        await this.helperHid.send({ op: 'orientation', value: ORIENTATION_HID[target] });
+        this.orientation = target;
+        this.broadcast({ t: 'meta', device: this.describe() });
+        return { orientation: target };
+      } catch (err) {
+        this.log(`Drehen über simhelper: ${err.message}`);
+      }
+    }
     const menuItem = ORIENTATION_MENU[target];
     const relative = dir === 'left' ? 'Rotate Left' : 'Rotate Right';
     const name = this.info.name.replace(/"/g, '');
@@ -327,7 +406,7 @@ class Device {
     const res = await run('osascript', ['-e', script], { timeout: 15_000, allowFail: true });
     if (res.code !== 0) throw new Error(`Drehen ging nicht: ${res.stderr.trim() || res.code}`);
     this.orientation = target;
-    this.frameSize = null; // nächstes Bild schickt neue Maße
+    this.broadcast({ t: 'meta', device: this.describe() });
     return { orientation: target };
   }
 
@@ -437,6 +516,7 @@ class Device {
     this.stopStream();
     this.stopLogs();
     this.hid.close();
+    if (this.helperHid) this.helperHid.close();
   }
 }
 

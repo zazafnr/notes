@@ -162,6 +162,9 @@ jobs:
           axe --version || axe --help | head -3
           cloudflared --version
 
+      - name: Video-Helfer bauen
+        run: simulator/runner/build-helper.sh || echo "::warning::simhelper fehlt – Bild über AXe-Einzelbilder, Drehen über das Simulator-Menü"
+
       - name: Bildschirme vermessen
         run: python3 simulator/runner/measure.py
 
@@ -178,14 +181,6 @@ jobs:
           node simulator/test/live-check.js || true
           cp "$SIM_DIR"/*.log "$SIM_DIR/selftest/" 2>/dev/null || true
           curl -fsS -X POST -H "Authorization: Bearer $SELFTEST_TOKEN" http://127.0.0.1:8787/api/shutdown || true
-
-      - name: Selbsttest-Ergebnisse hochladen
-        if: always() && fromJSON(inputs.settings).selftest
-        uses: actions/upload-artifact@v4
-        with:
-          name: selbsttest
-          path: /tmp/sim/selftest
-          if-no-files-found: ignore
 
       - name: Sitzung läuft
         run: |

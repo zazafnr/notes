@@ -20,18 +20,33 @@
     "appId": "de.zazafnr.iossimulator",
     "productName": "iOS-Simulator",
     "artifactName": "iOS-Simulator-${version}-${arch}-${target}.${ext}",
-    "directories": { "output": "dist" },
-    "files": ["main.js", "preload.js", "github.js", "renderer/**", "build/icon.png"],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "github.js",
+      "renderer/**",
+      "build/icon.png",
+      "build/icon-256.png"
+    ],
     "win": {
       "icon": "build/icon.png",
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "iOS-Simulator"
+      "shortcutName": "iOS-Simulator",
+      "artifactName": "iOS-Simulator-Setup-${version}.${ext}"
     },
-    "portable": { "artifactName": "iOS-Simulator-${version}-portable.exe" }
+    "portable": {
+      "artifactName": "iOS-Simulator-${version}-portable.exe"
+    }
   }
 }

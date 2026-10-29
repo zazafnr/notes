@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src *">
+  <title>iOS-Simulator</title>
+  <link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+  <header class="top">
+    <img src="../build/icon-256.png" alt="" class="logo">
+    <div class="titles">
+      <h1>iOS-Simulator</h1>
+      <p>Echte iPhone- und iPad-Simulatoren auf einem Cloud-Mac – am PC bedienen wie das Gerät</p>
+    </div>
+    <button class="ghost" id="btn-settings" title="Einstellungen">⚙︎ Einstellungen</button>
+  </header>
+
+  <main>
+    <!-- Ersteinrichtung -->
+    <section id="setup" class="card hidden">
+      <h2>Einmal einrichten: mit GitHub verbinden</h2>
+      <p class="muted">Die Simulatoren laufen auf einem Mac von GitHub Actions in deinem Repo. Dafür braucht die App ein persönliches Zugriffs-Token.</p>
+      <ol class="steps">
+        <li>Auf GitHub <a href="#" data-link="https://github.com/settings/personal-access-tokens/new">ein neues »Fine-grained token« anlegen</a>.</li>
+        <li><b>Repository access</b>: »Only select repositories« → <code id="setup-repo">zazafnr/notes</code>.</li>
+        <li><b>Permissions</b>: <i>Actions</i> = Read and write, <i>Commit statuses</i> = Read-only, <i>Contents</i> = Read-only.</li>
+        <li>Token kopieren und hier einfügen:</li>
+      </ol>
+      <div class="row">
+        <input id="token" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+        <input id="repo" type="text" value="zazafnr/notes" spellcheck="false" class="narrow">
+        <button class="primary" id="btn-token">Prüfen &amp; speichern</button>
+      </div>
+      <p id="setup-msg" class="msg"></p>
+    </section>
+
+    <!-- Start -->
+    <section id="start" class="hidden">
+      <div class="devices">
+        <label class="device-card" data-role="iphone">
+          <input type="checkbox" id="use-iphone" checked>
+          <div class="device-art phone"><span></span></div>
+          <div class="device-body">
+            <h3>iPhone</h3>
+            <select id="iphone-model"></select>
+            <div class="field-label">Profil</div>
+            <select id="iphone-profile" class="profile-select"></select>
+          </div>
+        </label>
+        <label class="device-card" data-role="ipad">
+          <input type="checkbox" id="use-ipad" checked>
+          <div class="device-art tablet"><span></span></div>
+          <div class="device-body">
+            <h3>iPad</h3>
+            <select id="ipad-model"></select>
+            <div class="field-label">Profil</div>
+            <select id="ipad-profile" class="profile-select"></select>
+          </div>
+        </label>
+      </div>
+
+      <div class="card options">
+        <div class="opt">
+          <div class="field-label">iOS-Version</div>
+          <select id="ios">
+            <option value="27">iOS 27 – neueste (Vorschau-Mac)</option>
+            <option value="26">iOS 26.5 – stabil</option>
+          </select>
+        </div>
+        <div class="opt grow">
+          <div class="field-label">App zum Testen (Branch im Repo)</div>
+          <select id="app-ref"></select>
+        </div>
+        <div class="opt">
+          <div class="field-label">Längste Dauer</div>
+          <select id="minutes">
+            <option value="30">30 Minuten</option>
+            <option value="60">1 Stunde</option>
+            <option value="90">1,5 Stunden</option>
+            <option value="120">2 Stunden</option>
+            <option value="180">3 Stunden</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="start-row">
+        <div class="usage">
+          <div class="usage-bar"><span id="usage-fill"></span></div>
+          <div class="muted small" id="usage-text"></div>
+        </div>
+        <button class="primary big" id="btn-start">▶︎ Starten</button>
+      </div>
+      <p id="start-msg" class="msg"></p>
+    </section>
+
+    <!-- Fortschritt -->
+    <section id="progress" class="card hidden">
+      <div class="progress-head">
+        <div class="spinner"></div>
+        <div>
+          <h2 id="progress-title">Starte …</h2>
+          <p id="progress-text" class="muted">Warte auf GitHub …</p>
+        </div>
+        <span class="timer" id="progress-timer">0:00</span>
+      </div>
+      <ul id="progress-steps" class="step-list"></ul>
+      <div class="row end">
+        <a href="#" id="progress-run" class="hidden">Lauf auf GitHub ansehen</a>
+        <button class="ghost danger" id="btn-cancel">Abbrechen</button>
+      </div>
+      <p class="muted small">Der erste Start dauert meist 3–6 Minuten: Mac starten, App bauen, Simulatoren hochfahren.</p>
+    </section>
+
+    <!-- Läuft -->
+    <section id="running" class="card hidden">
+      <div class="progress-head">
+        <div class="dot-live"></div>
+        <div>
+          <h2>Sitzung läuft</h2>
+          <p id="running-text" class="muted"></p>
+        </div>
+        <span class="timer" id="running-timer"></span>
+      </div>
+      <div class="row wrap" id="running-devices"></div>
+      <div class="row wrap">
+        <button id="btn-rebuild">⟳ App neu bauen (neuester Stand des Branches)</button>
+        <button id="btn-install">App-Datei installieren …</button>
+        <a href="#" id="running-run">Lauf auf GitHub</a>
+        <span class="spacer"></span>
+        <button class="primary danger" id="btn-stop">■ Beenden</button>
+      </div>
+      <pre id="build-log" class="log hidden"></pre>
+    </section>
+
+    <!-- Profile -->
+    <section id="profiles" class="card hidden">
+      <div class="row between">
+        <div>
+          <h2>Profile</h2>
+          <p class="muted small">Ein Profil macht den Simulator deinem iPhone oder iPad ähnlich: deine Fotos und Videos, Kontakte, Sprache, Hell/Dunkel, Standort – und die Daten deiner eigenen App bleiben von Sitzung zu Sitzung erhalten.</p>
+        </div>
+        <button id="btn-new-profile">＋ Neues Profil</button>
+      </div>
+      <div id="profile-list" class="profile-list"></div>
+    </section>
+  </main>
+
+  <!-- Profil bearbeiten -->
+  <dialog id="profile-dialog">
+    <form method="dialog" id="profile-form">
+      <h2 id="profile-dialog-title">Profil</h2>
+      <label>Name<input name="name" required placeholder="z. B. Mein iPhone"></label>
+      <div class="grid2">
+        <label>Gerät
+          <select name="kind"><option value="iphone">iPhone</option><option value="ipad">iPad</option></select>
+        </label>
+        <label>Modell
+          <select name="model"></select>
+        </label>
+        <label>Erscheinungsbild
+          <select name="appearance"><option value="light">Hell</option><option value="dark">Dunkel</option></select>
+        </label>
+        <label>Sprache &amp; Region
+          <select name="lang">
+            <option value="de-DE|de_DE">Deutsch (Deutschland)</option>
+            <option value="de-AT|de_AT">Deutsch (Österreich)</option>
+            <option value="de-CH|de_CH">Deutsch (Schweiz)</option>
+            <option value="en-US|en_US">English (US)</option>
+            <option value="en-GB|en_GB">English (UK)</option>
+            <option value="fr-FR|fr_FR">Français</option>
+            <option value="tr-TR|tr_TR">Türkçe</option>
+          </select>
+        </label>
+      </div>
+      <label>Fotos &amp; Videos (Ordner, z. B. vom iPhone auf den PC kopiert)
+        <div class="row">
+          <input name="photosDir" readonly placeholder="kein Ordner gewählt">
+          <button type="button" id="pick-photos">Ordner …</button>
+        </div>
+        <span class="muted small" id="photos-count"></span>
+      </label>
+      <label>Kontakte (.vcf, z. B. aus iCloud exportiert)
+        <div class="row">
+          <input name="contacts" readonly placeholder="keine Datei gewählt">
+          <button type="button" id="pick-contacts">Datei …</button>
+        </div>
+      </label>
+      <div class="grid2">
+        <label>Standort
+          <select name="location">
+            <option value="">wie Apple-Standard</option>
+            <option value="52.5200,13.4050">Berlin</option>
+            <option value="48.1351,11.5820">München</option>
+            <option value="53.5511,9.9937">Hamburg</option>
+            <option value="50.9375,6.9603">Köln</option>
+            <option value="50.1109,8.6821">Frankfurt</option>
+            <option value="48.2082,16.3738">Wien</option>
+            <option value="47.3769,8.5417">Zürich</option>
+          </select>
+        </label>
+        <label>Höchstens Fotos
+          <input name="maxPhotos" type="number" min="1" max="5000" value="300">
+        </label>
+      </div>
+      <label class="check"><input type="checkbox" name="keepAppData" checked> Daten meiner App (z. B. Hefte in FreeNotes) am Ende sichern und beim nächsten Start wieder einspielen</label>
+      <label class="check"><input type="checkbox" name="cleanStatusBar"> Statusleiste wie in Apple-Werbung (9:41, voller Akku)</label>
+      <p class="muted small">Apps aus dem App Store und ein iCloud-Backup lassen sich nicht übertragen – Apple bindet sie an echte Geräte. Deine eigenen Apps installierst du über den Branch oder »App-Datei installieren«.</p>
+      <div class="row end">
+        <button type="button" class="ghost danger" id="profile-delete">Löschen</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="profile-cancel">Abbrechen</button>
+        <button class="primary" id="profile-save" value="save">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Einstellungen -->
+  <dialog id="settings-dialog">
+    <form method="dialog">
+      <h2>Einstellungen</h2>
+      <label>Repository<input id="set-repo" spellcheck="false"></label>
+      <label>GitHub-Token (leer lassen = behalten)<input id="set-token" type="password" placeholder="github_pat_…" spellcheck="false"></label>
+      <label>Branch mit dem Simulator-Workflow (leer = automatisch)<input id="set-toolref" spellcheck="false" placeholder="main"></label>
+      <label>Mac-Minuten pro Monat (für die Anzeige)<input id="set-limit" type="number" min="10" step="10"></label>
+      <p class="muted small">GitHub Free: 2.000 Actions-Minuten pro Monat für private Repos, Mac-Minuten zählen zehnfach – also etwa 200 Mac-Minuten. In einem öffentlichen Repo sind sie kostenlos.</p>
+      <p id="settings-msg" class="msg"></p>
+      <div class="row end">
+        <button type="button" class="ghost" id="settings-cancel">Schließen</button>
+        <button type="button" class="primary" id="settings-save">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="models.js"></script>
+  <script src="launcher.js"></script>
+</body>
+</html>

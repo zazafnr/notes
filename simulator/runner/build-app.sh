@@ -63,7 +63,7 @@ fi
 echo "==> Scheme: $SCHEME"
 
 echo "==> BUILD startet (xcodebuild, iOS-Simulator)"
-xcodebuild build "${ARGS[@]}" \
+xcodebuild build ${ARGS[@]+"${ARGS[@]}"} \
   -scheme "$SCHEME" \
   -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath "$OUT" \
@@ -73,6 +73,7 @@ xcodebuild build "${ARGS[@]}" \
 if ! grep -q "BUILD SUCCEEDED" "$SIM_DIR/xcodebuild.log"; then
   echo "==> BUILD FAILED – Fehler:"
   grep -E "error:" "$SIM_DIR/xcodebuild.log" | sort -u | head -60
+  grep -q "error:" "$SIM_DIR/xcodebuild.log" || tail -40 "$SIM_DIR/xcodebuild.log"
   exit 1
 fi
 

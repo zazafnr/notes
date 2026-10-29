@@ -1,0 +1,68 @@
+name: iOS-Simulator für Windows
+
+# Baut die PC-App (Installer und portable .exe) und stellt sie unter »Releases« bereit:
+# https://github.com/<repo>/releases/tag/simulator-latest
+on:
+  push:
+    paths:
+      - "simulator/desktop/**"
+      - ".github/workflows/simulator-desktop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: simulator-desktop
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: simulator/desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Abhängigkeiten
+        run: npm ci --no-audit --no-fund
+
+      - name: Prüfen
+        run: |
+          for f in main.js preload.js github.js renderer/*.js; do node --check "$f"; done
+          node ../test/github.test.js
+
+      - name: Windows-App bauen
+        run: npx electron-builder --win nsis portable --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Als Artefakt ablegen
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Simulator-Windows
+          path: |
+            simulator/desktop/dist/*.exe
+
+      - name: Release »simulator-latest« erneuern
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete simulator-latest --cleanup-tag --yes || true
+          gh release create simulator-latest dist/*.exe \
+            --target "$GITHUB_SHA" \
+            --title "iOS-Simulator für Windows" \
+            --prerelease \
+            --notes "PC-App für die iPhone- und iPad-Simulatoren auf dem Cloud-Mac. Gebaut aus ${GITHUB_REF_NAME} (${GITHUB_SHA::7}).
+
+          - **iOS-Simulator-Setup-…exe**: Installer (Startmenü und Desktop-Verknüpfung)
+          - **iOS-Simulator-…-portable.exe**: ohne Installation starten
+
+          Windows zeigt beim ersten Start evtl. »Der Computer wurde durch Windows geschützt« (die App ist nicht signiert): »Weitere Informationen« → »Trotzdem ausführen«."

@@ -34,6 +34,7 @@ const env = {
   MOCK_LOG: logFile,
   SIM_CONFIG: path.join(dir, 'session.json'),
   PORT: String(PORT),
+  SIMHELPER: path.join(__dirname, 'mock-bin', 'simhelper'),
 };
 const server = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'server.js')], { env, stdio: ['ignore', 'pipe', 'pipe'] });
 let serverOut = '';
@@ -133,6 +134,8 @@ async function main() {
   send({ t: 'button', b: 'lock', long: true });
   await waitFor(() => mockLog().filter((e) => e.cmd === 'axe' && e.args[0] === 'button').length >= 2, 'Tasten');
   const log = mockLog();
+  const order = log.filter((e) => e.cmd === 'axe' && ['type', 'key', 'key-combo', 'button'].includes(e.args[0])).map((e) => e.args[0] + (e.args[0] === 'key' ? e.args[1] : ''));
+  assert.deepEqual(order, ['type', 'key-combo', 'key40', 'key-combo', 'button', 'button'], 'Reihenfolge bleibt erhalten');
   assert.ok(log.find((e) => e.cmd === 'axe' && e.args[0] === 'key' && e.args[1] === '40'), 'Enter = 40');
   assert.ok(log.find((e) => e.cmd === 'axe' && e.args[0] === 'key-combo' && e.args[2] === '227' && e.args[4] === '4'), 'Strg+A = Cmd+A');
   assert.ok(log.find((e) => e.cmd === 'axe' && e.args[0] === 'button' && e.args[1] === 'home'));
@@ -169,6 +172,35 @@ async function main() {
   assert.equal(media.status, 200);
   const add = mockLog().find((e) => e.cmd === 'xcrun' && e.args[1] === 'addmedia');
   assert.equal(path.basename(add.args[3]), 'urlaub.jpg', 'Dateiname ohne Pfadanteile');
+
+  // Video kommt über simhelper (Minicap), nicht über AXe-Einzelbilder
+  assert.ok(mockLog().find((e) => e.cmd === 'simhelper-stream' && e.udid === 'AAAA-1111'), 'simhelper-Video läuft');
+  assert.ok(!mockLog().find((e) => e.cmd === 'axe' && e.args[0] === 'stream-video'), 'keine AXe-Einzelbilder nötig');
+
+  // Drehen über simhelper: Ausrichtung als HID-Ereignis, Bild bleibt hochkant → Anzeige wird gedreht
+  const rot = await post('/api/dev/iphone/rotate', { dir: 'left' });
+  assert.equal(rot.status, 200);
+  assert.deepEqual(await rot.json(), { orientation: 'landscapeFlipped' });
+  assert.ok(mockLog().find((e) => e.cmd === 'simhelper-hid' && e.command.op === 'orientation' && e.command.value === 'landscapeLeft'));
+  await waitFor(() => messages.find((m) => m.t === 'meta' && m.device.orientation === 'landscapeFlipped' && m.device.rotateView === -90), 'Anzeige -90° drehen');
+  // Tippen oben links in der gedrehten Anzeige = oben rechts im Hochformat
+  send({ t: 'touch', p: 'down', x: 0, y: 0 });
+  send({ t: 'touch', p: 'up', x: 0, y: 0 });
+  await waitFor(() => mockLog().filter((e) => e.cmd === 'hid').some((e) => e.primitives.some((p) => p.kind === 'up' && p.x === 402 && p.y === 0)), 'Touch im Querformat');
+  const back = await post('/api/dev/iphone/rotate', { dir: 'right' });
+  assert.deepEqual(await back.json(), { orientation: 'portrait' });
+
+  // Zwei Finger (Alt+Ziehen) und Zoom (Strg+Mausrad)
+  send({ t: 'pinch', p: 'down', x: 0.4, y: 0.4 });
+  send({ t: 'pinch', p: 'move', x: 0.3, y: 0.3 });
+  send({ t: 'pinch', p: 'up', x: 0.3, y: 0.3 });
+  send({ t: 'zoom', x: 0.5, y: 0.5, scale: 1.5 });
+  send({ t: 'button', b: 'shake' });
+  await waitFor(() => mockLog().some((e) => e.cmd === 'simhelper-hid' && e.command.op === 'shake'), 'Schütteln');
+  const two = mockLog().filter((e) => e.cmd === 'simhelper-hid' && e.command.op === 'two').map((e) => e.command);
+  assert.deepEqual(two.map((c) => c.dir), ['down', 'down', 'up']);
+  assert.ok(Math.abs(two[0].x1 - 402 * 0.4) < 0.01 && Math.abs(two[0].x2 - 402 * 0.6) < 0.01, 'zweiter Finger gespiegelt');
+  assert.ok(mockLog().some((e) => e.cmd === 'simhelper-hid' && e.command.op === 'pinch' && e.command.scale === 1.5));
 
   // Drehen-Koordinaten: Querformat-Bild → Touch wird ins Hochformat umgerechnet
   const { Device } = require('../server/device');

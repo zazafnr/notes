@@ -36,6 +36,7 @@ PY
 
 cd "$HERE/../server"
 npm ci --no-audit --no-fund --omit=dev
+if [ -x "$SIM_DIR/simhelper" ]; then export SIMHELPER="$SIM_DIR/simhelper"; fi
 SIM_CONFIG="$SIM_DIR/session.json" nohup node server.js > "$SIM_DIR/server.log" 2>&1 &
 echo $! > "$SIM_DIR/server.pid"
 
@@ -60,9 +61,19 @@ if [ -z "$URL" ]; then
   exit 1
 fi
 
-# Warten, bis der Tunnel von außen erreichbar ist (DNS braucht ein paar Sekunden).
+# Erst nachschlagen, wenn der Tunnel angemeldet ist: eine zu frühe DNS-Anfrage merkt sich
+# »gibt es nicht« für Minuten (auf dem Mac und beim PC).
 for i in $(seq 1 60); do
-  curl -fsS "$URL/healthz" > /dev/null 2>&1 && break
+  grep -q "Registered tunnel connection" "$SIM_DIR/tunnel.log" && break
+  sleep 0.5
+done
+HOST=${URL#https://}
+for i in $(seq 1 30); do
+  IP=$(dig +short @1.1.1.1 "$HOST" A | grep -E '^[0-9.]+$' | head -1)
+  if [ -n "$IP" ] && curl -fsS --max-time 5 --resolve "$HOST:443:$IP" "$URL/healthz" > /dev/null 2>&1; then
+    echo "Tunnel erreichbar: $URL"
+    break
+  fi
   sleep 1
 done
 echo "$URL" > "$SIM_DIR/url"

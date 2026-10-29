@@ -77,9 +77,22 @@ async function testDevice(dev) {
   const role = dev.role;
   const state = await connect(role);
   const start = Date.now();
-  while (state.frames < 5 && Date.now() - start < 30_000) await sleep(100);
-  const fps = state.frames / ((Date.now() - start) / 1000);
-  check(`${role}: Bild kommt an`, state.frames >= 1, `${state.frames} Bilder, ~${fps.toFixed(1)}/s, ${state.last?.length ?? 0} Bytes, ${JSON.stringify(state.meta?.frame)}`);
+  while (state.frames < 1 && Date.now() - start < 30_000) await sleep(100);
+  // Bildrate messen, während sich etwas bewegt (Wischen zwischen Home-Seiten)
+  const before = state.frames;
+  const t0 = Date.now();
+  for (let k = 0; k < 4; k++) {
+    state.ws.send(JSON.stringify({ t: 'touch', p: 'down', x: 0.8, y: 0.5 }));
+    for (let i = 1; i <= 20; i++) {
+      await sleep(25);
+      state.ws.send(JSON.stringify({ t: 'touch', p: 'move', x: 0.8 - 0.03 * i, y: 0.5 }));
+    }
+    state.ws.send(JSON.stringify({ t: 'touch', p: 'up', x: 0.2, y: 0.5 }));
+    await sleep(400);
+  }
+  const fps = (state.frames - before) / ((Date.now() - t0) / 1000);
+  check(`${role}: Bild kommt an`, state.frames >= 1, `${state.meta?.video}, ${state.frames} Bilder, ${state.last?.length ?? 0} Bytes, ${JSON.stringify(state.meta?.frame)}`);
+  check(`${role}: flüssiges Bild (≥ 12 Bilder/s bei Bewegung)`, fps >= 12, `${fps.toFixed(1)} Bilder/s`);
   if (state.last) fs.writeFileSync(path.join(out, `${role}-stream.jpg`), state.last);
 
   // Home, dann das Einstellungen-Symbol suchen und über den Live-Touch-Weg antippen.
@@ -134,8 +147,8 @@ async function testDevice(dev) {
     const res = await fetch(`${base}/api/dev/${role}/rotate`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ dir: 'left' }) });
     const body = await res.json();
     await sleep(3000);
-    const landscape = state.meta?.frame && state.meta.frame.w > state.meta.frame.h;
-    check(`${role}: Drehen ins Querformat`, res.ok && landscape, `${res.status} ${JSON.stringify(body)} frame=${JSON.stringify(state.meta?.frame)}`);
+    const landscape = state.meta?.frame && (state.meta.frame.w > state.meta.frame.h || Math.abs(state.meta.rotateView) === 90);
+    check(`${role}: Drehen ins Querformat`, res.ok && landscape, `${res.status} ${JSON.stringify(body)} frame=${JSON.stringify(state.meta?.frame)} rotateView=${state.meta?.rotateView}`);
     await shot(role, `${role}-5-rotated`);
     if (res.ok) {
       const icon2 = findLabel(describeUi(dev.udid), /^(Einstellungen|Settings)$/);
@@ -160,7 +173,12 @@ async function main() {
   const info = await (await fetch(`${base}/api/info`, { headers: auth })).json();
   console.log(JSON.stringify(info, null, 2));
   const url = fs.readFileSync(path.join(simDir, 'url'), 'utf8').trim();
-  const remote = await fetch(`${url}/healthz`).then((r) => r.ok).catch(() => false);
+  const host = new URL(url).host;
+  let remote = false;
+  try {
+    const ip = execFileSync('dig', ['+short', '@1.1.1.1', host, 'A'], { encoding: 'utf8' }).split('\n').find((l) => /^[0-9.]+$/.test(l));
+    remote = !!ip && execFileSync('curl', ['-fsS', '--max-time', '8', '--resolve', `${host}:443:${ip}`, `${url}/healthz`], { encoding: 'utf8' }).includes('ok');
+  } catch { /* nicht erreichbar */ }
   check('Tunnel von außen erreichbar', remote, url);
   for (const dev of info.devices) {
     try {

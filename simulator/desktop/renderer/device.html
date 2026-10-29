@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src *">
+  <title>Gerät</title>
+  <link rel="stylesheet" href="device.css">
+</head>
+<body>
+  <div id="stage">
+    <div id="device" class="device">
+      <div class="side-button power" data-button="lock" title="Seitentaste (Strg+L)"></div>
+      <div class="side-button vol-up" title="Lauter (nicht unterstützt)"></div>
+      <div class="side-button vol-down" title="Leiser (nicht unterstützt)"></div>
+      <div id="screen" class="screen">
+        <canvas id="canvas"></canvas>
+        <div id="cutout" class="cutout"></div>
+        <div id="overlay" class="overlay">
+          <div class="overlay-box">
+            <div class="spinner"></div>
+            <div id="overlay-text">Verbinde …</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <nav id="toolbar" class="toolbar">
+    <button data-act="home" title="Home (Strg+H)">⌂</button>
+    <button data-act="app-switcher" title="App-Umschalter (Strg+Umschalt+H)">❐</button>
+    <button data-act="lock" title="Sperren (Strg+L)">⏻</button>
+    <button data-act="siri" title="Siri">◉</button>
+    <button data-act="shake" title="Schütteln (z. B. Rückgängig)">≋</button>
+    <hr>
+    <button data-act="rotate-left" title="Nach links drehen (Strg+←)">⟲</button>
+    <button data-act="rotate-right" title="Nach rechts drehen (Strg+→)">⟳</button>
+    <button data-act="appearance" title="Hell/Dunkel">◐</button>
+    <button data-act="screenshot" title="Bildschirmfoto (Strg+S)">📷</button>
+    <hr>
+    <button data-act="photos" title="Fotos/Videos hinzufügen">🖼</button>
+    <button data-act="paste" title="PC-Zwischenablage ins Gerät (Strg+Umschalt+V)">📋</button>
+    <button data-act="copy" title="Zwischenablage des Geräts auf den PC">⇪</button>
+    <button data-act="url" title="Link öffnen">🔗</button>
+    <button data-act="rebuild" title="App neu bauen">⚒</button>
+    <button data-act="appdata" title="App-Daten sichern/laden">💾</button>
+    <button data-act="logs" title="App-Protokoll">≡</button>
+    <hr>
+    <button data-act="quality" title="Bildqualität" id="btn-quality">HD</button>
+    <button data-act="pin" title="Immer im Vordergrund">📌</button>
+    <button data-act="launcher" title="Startfenster">☰</button>
+    <button data-act="minimize" title="Minimieren">–</button>
+    <button data-act="close" title="Fenster schließen">✕</button>
+    <div class="latency" id="latency" title="Verzögerung zum Mac">– ms</div>
+  </nav>
+
+  <div id="toasts" class="toasts"></div>
+  <div id="logs" class="logs hidden"><div class="logs-head"><b>App-Protokoll</b><button data-act="logs">✕</button></div><pre id="log-lines"></pre></div>
+  <div id="menu" class="menu hidden"></div>
+  <textarea id="keys" class="keys" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Tastatur"></textarea>
+
+  <script src="models.js"></script>
+  <script src="device.js"></script>
+</body>
+</html>

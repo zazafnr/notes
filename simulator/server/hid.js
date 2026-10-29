@@ -30,7 +30,7 @@ function realpath(p) {
 function tempRoots() {
   const roots = [];
   try {
-    const dir = execFileSync('getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8' }).trim();
+    const dir = execFileSync('getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     if (dir) roots.push(realpath(dir));
   } catch { /* nur auf macOS vorhanden */ }
   roots.push(realpath(os.tmpdir()));
@@ -39,7 +39,7 @@ function tempRoots() {
 
 function developerDir() {
   try {
-    return realpath(execFileSync('xcode-select', ['-p'], { encoding: 'utf8' }).trim());
+    return realpath(execFileSync('xcode-select', ['-p'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
   } catch {
     return '';
   }
