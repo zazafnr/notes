@@ -132,7 +132,8 @@ jobs:
       - name: Simulatoren anlegen
         run: |
           simulator/runner/status.sh pending "Lege Simulatoren an"
-          simulator/runner/boot.sh
+          # Mit eigener App erst bauen, dann hochfahren (beides gleichzeitig bremst den Build stark).
+          NO_BOOT=$([ -n "$APP_REF" ] && echo 1 || echo 0) simulator/runner/boot.sh
 
       - name: App bauen
         if: inputs.app_ref != ''

@@ -6,7 +6,11 @@ APPEARANCE=${APPEARANCE:-light}
 LANGUAGE=${LANGUAGE:-de-DE}
 LOCALE=${LOCALE:-de_DE}
 
-for udid in $(python3 -c "import json;print(' '.join(d['udid'] for d in json.load(open('$SIM_DIR/devices.json'))))"); do
+UDIDS=$(python3 -c "import json;print(' '.join(d['udid'] for d in json.load(open('$SIM_DIR/devices.json'))))")
+for udid in $UDIDS; do
+  xcrun simctl boot "$udid" 2>/dev/null || true   # schon gestartet ist auch gut
+done
+for udid in $UDIDS; do
   xcrun simctl bootstatus "$udid" -b
   xcrun simctl ui "$udid" appearance "$APPEARANCE" || true
   xcrun simctl spawn "$udid" defaults write -g AppleLanguages -array "$LANGUAGE" || true

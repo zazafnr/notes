@@ -114,7 +114,11 @@ for role in roles:
 json.dump(devices, open(os.path.join(sim_dir, "devices.json"), "w"), indent=2)
 PY
 
-for udid in $(python3 -c "import json;print(' '.join(d['udid'] for d in json.load(open('$SIM_DIR/devices.json'))))"); do
-  xcrun simctl boot "$udid"
-done
-echo "Simulatoren starten im Hintergrund"
+# Mit NO_BOOT=1 nur anlegen: dann startet wait-boot.sh sie später (z. B. erst nach dem App-Build,
+# weil der erste Start viel Rechenzeit kostet und den Build sonst stark bremst).
+if [ "${NO_BOOT:-0}" != "1" ]; then
+  for udid in $(python3 -c "import json;print(' '.join(d['udid'] for d in json.load(open('$SIM_DIR/devices.json'))))"); do
+    xcrun simctl boot "$udid"
+  done
+  echo "Simulatoren starten im Hintergrund"
+fi
