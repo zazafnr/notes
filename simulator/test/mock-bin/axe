@@ -1,0 +1,46 @@
+#!/usr/bin/env node
+// Nachgebautes `axe` für Tests unter Linux: schreibt jeden Aufruf in $MOCK_LOG.
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const net = require('node:net');
+const args = process.argv.slice(2);
+const logFile = process.env.MOCK_LOG;
+const record = (entry) => fs.appendFileSync(logFile, JSON.stringify(entry) + '\n');
+const udid = args[args.indexOf('--udid') + 1];
+
+if (args[0] === 'stream-video') {
+  const file = path.join(__dirname, '..', 'fixtures', fs.existsSync(process.env.MOCK_ROTATED || '/nonexistent') ? 'landscape.jpg' : 'portrait.jpg');
+  const tick = () => {
+    const jpg = fs.readFileSync(path.join(__dirname, '..', 'fixtures', fs.existsSync(process.env.MOCK_ROTATED || '/nonexistent') ? 'landscape.jpg' : 'portrait.jpg'));
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(jpg.length);
+    process.stdout.write(Buffer.concat([len, jpg]));
+  };
+  void file;
+  tick();
+  setInterval(tick, 100);
+  process.on('SIGINT', () => process.exit(0));
+} else if (args[0] === 'hid-broker') {
+  const { endpointCandidates } = require(path.join(__dirname, '..', '..', 'server', 'hid.js'));
+  const sock = endpointCandidates(udid)[0];
+  fs.mkdirSync(path.dirname(sock), { recursive: true, mode: 0o700 });
+  try { fs.unlinkSync(sock); } catch {}
+  const server = net.createServer((c) => {
+    c.write(JSON.stringify({ ready: true }) + '\n');
+    let buf = '';
+    c.on('data', (d) => {
+      buf += d;
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      const req = JSON.parse(buf.slice(0, nl));
+      if (req.primitives.length) record({ cmd: 'hid', udid, primitives: req.primitives });
+      c.end(JSON.stringify({}) + '\n');
+    });
+  });
+  server.listen(sock);
+} else {
+  let input = '';
+  if (args.includes('--stdin')) input = fs.readFileSync(0, 'utf8');
+  record({ cmd: 'axe', args, input });
+}

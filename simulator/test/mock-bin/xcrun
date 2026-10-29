@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+'use strict';
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+let input = '';
+if (args[1] === 'pbcopy') input = fs.readFileSync(0, 'utf8');
+fs.appendFileSync(process.env.MOCK_LOG, JSON.stringify({ cmd: 'xcrun', args, input }) + '\n');
+if (args[1] === 'pbpaste') process.stdout.write('vom iPhone kopiert');
+if (args[1] === 'io' && args[3] === 'screenshot') fs.copyFileSync(__dirname + '/../fixtures/portrait.jpg', args[args.length - 1]);
+if (args[1] === 'get_app_container') process.stdout.write('/tmp\n');

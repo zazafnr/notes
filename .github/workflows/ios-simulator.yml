@@ -1,0 +1,202 @@
+name: iOS-Simulator
+
+# Startet iPhone- und iPad-Simulatoren auf einem Mac in der Cloud und macht sie über die
+# PC-App »iOS-Simulator« bedienbar (Bild, Touch, Tastatur). Gestartet wird der Lauf von der
+# PC-App; die meisten Felder setzt sie selbst.
+run-name: "iOS-Simulator ${{ inputs.session || 'Prüfung' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      session:
+        description: "Sitzungs-ID (setzt die PC-App)"
+        required: true
+        type: string
+      auth_hash:
+        description: "SHA-256 des Zugangsschlüssels (setzt die PC-App)"
+        required: true
+        type: string
+      devices:
+        description: "Geräte"
+        type: choice
+        options: [beide, iphone, ipad]
+        default: beide
+      ios:
+        description: "iOS-Version (27 = neueste, 26 = stabil)"
+        type: choice
+        options: ["27", "26"]
+        default: "27"
+      iphone_model:
+        description: "iPhone-Modell (auto = neuestes Pro)"
+        type: string
+        default: auto
+      ipad_model:
+        description: "iPad-Modell (auto = neuestes iPad Pro 13)"
+        type: string
+        default: auto
+      app_ref:
+        description: "Branch mit der App (leer = leerer Simulator nur mit Apple-Apps)"
+        type: string
+        default: claude/chat-ios-notizbuch-ki-yx5ny3
+      app_path:
+        description: "Projekt im Repo (auto = erstes .swiftpm/.xcodeproj)"
+        type: string
+        default: auto
+      minutes:
+        description: "Längste Dauer in Minuten"
+        type: string
+        default: "60"
+      settings:
+        description: "Profil-Einstellungen als JSON (language, locale, appearance)"
+        type: string
+        default: "{}"
+  push:
+    paths:
+      - "simulator/server/**"
+      - "simulator/runner/**"
+      - ".github/workflows/ios-simulator.yml"
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  # Bei Änderungen an den Werkzeugen nur kurz auf Linux prüfen, ohne Mac-Minuten.
+  check:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Server und Skripte prüfen
+        run: |
+          for f in simulator/runner/*.sh; do bash -n "$f"; done
+          cd simulator/server
+          npm ci --no-audit --no-fund
+          for f in *.js; do node --check "$f"; done
+          node ../test/server.test.js
+
+  session:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ inputs.ios == '26' && 'macos-26' || 'xcode-27' }}
+    timeout-minutes: 200
+    env:
+      SIM_DIR: /tmp/sim
+      SESSION: ${{ inputs.session }}
+      AUTH_HASH: ${{ inputs.auth_hash }}
+      DEVICES: ${{ inputs.devices }}
+      IPHONE_MODEL: ${{ inputs.iphone_model }}
+      IPAD_MODEL: ${{ inputs.ipad_model }}
+      APP_REF: ${{ inputs.app_ref }}
+      APP_PATH: ${{ inputs.app_path }}
+      MINUTES: ${{ inputs.minutes }}
+      LANGUAGE: ${{ fromJSON(inputs.settings).language || 'de-DE' }}
+      LOCALE: ${{ fromJSON(inputs.settings).locale || 'de_DE' }}
+      APPEARANCE: ${{ fromJSON(inputs.settings).appearance || 'light' }}
+      GH_TOKEN: ${{ github.token }}
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start melden
+        run: simulator/runner/status.sh pending "Cloud-Mac gestartet"
+
+      - name: Werkzeuge laden (im Hintergrund)
+        run: |
+          mkdir -p "$SIM_DIR"
+          ( brew install cameroncooke/axe/axe cloudflared > "$SIM_DIR/brew.log" 2>&1; echo $? > "$SIM_DIR/brew.done" ) &
+
+      - name: Neuestes Xcode wählen
+        run: |
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          [ -z "$XC" ] && XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: Simulatoren anlegen
+        run: |
+          simulator/runner/status.sh pending "Lege Simulatoren an"
+          simulator/runner/boot.sh
+
+      - name: App-Branch holen
+        if: inputs.app_ref != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.app_ref }}
+          path: app
+          fetch-depth: 1
+
+      - name: App bauen
+        if: inputs.app_ref != ''
+        run: |
+          simulator/runner/status.sh pending "Baue die App (${APP_REF})"
+          APP_DIR="$GITHUB_WORKSPACE/app" APP_REF="" simulator/runner/build-app.sh \
+            || echo "::warning::App ließ sich nicht bauen – Simulator startet trotzdem"
+
+      - name: Auf Simulatoren warten
+        run: |
+          simulator/runner/status.sh pending "Starte iPhone/iPad"
+          simulator/runner/wait-boot.sh
+
+      - name: App installieren
+        if: inputs.app_ref != ''
+        run: |
+          if [ ! -f "$SIM_DIR/app.json" ]; then echo "Keine gebaute App"; exit 0; fi
+          APP=$(python3 -c "import json;print(json.load(open('$SIM_DIR/app.json'))['path'])")
+          BUNDLE=$(python3 -c "import json;print(json.load(open('$SIM_DIR/app.json'))['bundle'])")
+          for udid in $(python3 -c "import json;print(' '.join(d['udid'] for d in json.load(open('$SIM_DIR/devices.json'))))"); do
+            xcrun simctl install "$udid" "$APP" && xcrun simctl launch "$udid" "$BUNDLE" || echo "::warning::Installation auf $udid ging nicht"
+          done
+
+      - name: Werkzeuge prüfen
+        run: |
+          for i in $(seq 1 600); do [ -f "$SIM_DIR/brew.done" ] && break; sleep 1; done
+          cat "$SIM_DIR/brew.log" | tail -20
+          [ "$(cat "$SIM_DIR/brew.done")" = "0" ] || { echo "::error::Homebrew-Installation fehlgeschlagen"; exit 1; }
+          axe --version || axe --help | head -3
+          cloudflared --version
+
+      - name: Sitzung öffnen
+        run: |
+          simulator/runner/status.sh pending "Verbinde"
+          APP_DIR="$GITHUB_WORKSPACE/app" simulator/runner/start-session.sh
+
+      - name: Selbsttest
+        if: fromJSON(inputs.settings).selftest
+        env:
+          SELFTEST_TOKEN: ${{ fromJSON(inputs.settings).selftest }}
+        run: |
+          node simulator/test/live-check.js || true
+          cp "$SIM_DIR"/*.log "$SIM_DIR/selftest/" 2>/dev/null || true
+          curl -fsS -X POST -H "Authorization: Bearer $SELFTEST_TOKEN" http://127.0.0.1:8787/api/shutdown || true
+
+      - name: Selbsttest-Ergebnisse hochladen
+        if: always() && fromJSON(inputs.settings).selftest
+        uses: actions/upload-artifact@v4
+        with:
+          name: selbsttest
+          path: /tmp/sim/selftest
+          if-no-files-found: ignore
+
+      - name: Sitzung läuft
+        run: |
+          echo "Sitzung läuft. Beenden über die PC-App oder ›Cancel workflow‹."
+          PID=$(cat "$SIM_DIR/server.pid")
+          while kill -0 "$PID" 2>/dev/null; do sleep 10; done
+          tail -40 "$SIM_DIR/server.log"
+
+      - name: Ende melden
+        if: always()
+        run: |
+          [ -f "$SIM_DIR/server.log" ] && tail -60 "$SIM_DIR/server.log"
+          if [ "${{ job.status }}" = "success" ]; then
+            simulator/runner/status.sh failure "Sitzung beendet"
+          else
+            simulator/runner/status.sh error "Fehler beim Start – Details im GitHub-Lauf"
+          fi
