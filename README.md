@@ -50,3 +50,7 @@ FreeNotes.swiftpm/
 
 Jeder Push kompiliert die App automatisch auf einem Cloud-Mac mit Xcode 16 und Xcode 26 und führt die Logik-Tests in `LogicTests/` aus (GitHub Actions, `.github/workflows/build.yml`).
 Der ursprüngliche Plan steht in [`docs/PLAN.md`](docs/PLAN.md).
+
+## Rechte
+
+© 2026 zaza.dev – **Alle Rechte vorbehalten.** Der Code ist zum Anschauen öffentlich, aber nicht frei lizenziert: Kopieren, Weitergeben oder Verwenden in eigenen Projekten ist ohne schriftliche Erlaubnis nicht gestattet. Details in [`LICENSE`](LICENSE).
