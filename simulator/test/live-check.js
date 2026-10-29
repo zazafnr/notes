@@ -73,22 +73,39 @@ async function shot(role, name) {
   fs.writeFileSync(path.join(out, `${name}.png`), Buffer.from(await res.arrayBuffer()));
 }
 
+function findIcon(udid) {
+  for (let i = 0; i < 4; i++) {
+    const icon = findLabel(describeUi(udid), /^(Einstellungen|Settings)$/);
+    if (icon) return icon;
+    execFileSync('sleep', ['1.5']);
+  }
+  return null;
+}
+
 async function testDevice(dev) {
   const role = dev.role;
   const state = await connect(role);
   const start = Date.now();
   while (state.frames < 1 && Date.now() - start < 30_000) await sleep(100);
+  // Nach der Installation ist FreeNotes offen: zum Home-Bildschirm
+  for (let i = 0; i < 2; i++) {
+    state.ws.send(JSON.stringify({ t: 'button', b: 'home' }));
+    await sleep(1500);
+  }
   // Bildrate messen, während sich etwas bewegt (Wischen zwischen Home-Seiten)
   const before = state.frames;
   const t0 = Date.now();
   for (let k = 0; k < 4; k++) {
-    state.ws.send(JSON.stringify({ t: 'touch', p: 'down', x: 0.8, y: 0.5 }));
+    // abwechselnd nach links und rechts wischen, damit am Ende wieder Seite 1 zu sehen ist
+    const from = k % 2 === 0 ? 0.8 : 0.2;
+    const step = k % 2 === 0 ? -0.03 : 0.03;
+    state.ws.send(JSON.stringify({ t: 'touch', p: 'down', x: from, y: 0.5 }));
     for (let i = 1; i <= 20; i++) {
       await sleep(25);
-      state.ws.send(JSON.stringify({ t: 'touch', p: 'move', x: 0.8 - 0.03 * i, y: 0.5 }));
+      state.ws.send(JSON.stringify({ t: 'touch', p: 'move', x: from + step * i, y: 0.5 }));
     }
-    state.ws.send(JSON.stringify({ t: 'touch', p: 'up', x: 0.2, y: 0.5 }));
-    await sleep(400);
+    state.ws.send(JSON.stringify({ t: 'touch', p: 'up', x: from + step * 20, y: 0.5 }));
+    await sleep(500);
   }
   const fps = (state.frames - before) / ((Date.now() - t0) / 1000);
   check(`${role}: Bild kommt an`, state.frames >= 1, `${state.meta?.video}, ${state.frames} Bilder, ${state.last?.length ?? 0} Bytes, ${JSON.stringify(state.meta?.frame)}`);
@@ -101,7 +118,7 @@ async function testDevice(dev) {
   await shot(role, `${role}-1-home`);
   const W = dev.pointWidth;
   const H = dev.pointHeight;
-  const icon = findLabel(describeUi(dev.udid), /^(Einstellungen|Settings)$/);
+  const icon = findIcon(dev.udid);
   check(`${role}: Einstellungen-Symbol gefunden`, !!icon, icon ? JSON.stringify(icon.frame) : '');
   if (icon) {
     const f = icon.frame;
@@ -151,7 +168,7 @@ async function testDevice(dev) {
     check(`${role}: Drehen ins Querformat`, res.ok && landscape, `${res.status} ${JSON.stringify(body)} frame=${JSON.stringify(state.meta?.frame)} rotateView=${state.meta?.rotateView}`);
     await shot(role, `${role}-5-rotated`);
     if (res.ok) {
-      const icon2 = findLabel(describeUi(dev.udid), /^(Einstellungen|Settings)$/);
+      const icon2 = findIcon(dev.udid);
       if (icon2) {
         const f = icon2.frame;
         await tapAt(state, (f.x + f.width / 2) / H, (f.y + f.height / 2) / W);
@@ -163,6 +180,13 @@ async function testDevice(dev) {
       await fetch(`${base}/api/dev/${role}/rotate`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ dir: 'right' }) });
     }
   }
+
+  // FreeNotes öffnen und schauen, ob die App läuft
+  const launch = await fetch(`${base}/api/dev/${role}/launch`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ bundle: 'de.freenotes.app' }) });
+  await sleep(4000);
+  await shot(role, `${role}-7-freenotes`);
+  const appLabels = allLabels(describeUi(dev.udid));
+  check(`${role}: FreeNotes startet`, launch.ok && appLabels.length > 3, appLabels.slice(0, 12).join(' | '));
 
   const apps = await (await fetch(`${base}/api/dev/${role}/apps`, { headers: auth })).json();
   check(`${role}: App-Liste`, Array.isArray(apps.apps), JSON.stringify(apps).slice(0, 200));

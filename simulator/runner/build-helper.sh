@@ -6,6 +6,18 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SIM_DIR=${SIM_DIR:-/tmp/sim}
 FW="$(brew --prefix axe)/libexec/Frameworks"
 PH="$SIM_DIR/idb-headers"
+CACHE="$SIM_DIR/simhelper-cache"
+
+# Schon gebaut (Cache von einer früheren Sitzung mit gleichem Xcode)? Dann nur prüfen und nehmen.
+if [ -x "$CACHE/simhelper" ]; then
+  "$CACHE/simhelper" > /dev/null 2>&1
+  if [ $? -eq 2 ]; then
+    cp "$CACHE/simhelper" "$SIM_DIR/simhelper"
+    echo "simhelper aus dem Cache"
+    exit 0
+  fi
+  echo "simhelper im Cache passt nicht mehr, baue neu"
+fi
 
 # Private Header (Modulkarten für CoreSimulator & Co.) aus genau dem idb-Stand, mit dem AXe gebaut ist.
 VERSION=$(axe --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
@@ -20,13 +32,13 @@ git fetch -q --depth 1 origin "$IDB_REF" && git checkout -q FETCH_HEAD -- Privat
 
 # Die Schnittstellen nennen Typen voll qualifiziert (»FBSimulatorControl.FBSimulator…«). Weil Modul und
 # Klasse »FBSimulatorControl« gleich heißen, versteht der Compiler das nicht. Deshalb eine Kopie der
-# Frameworks mit Schnittstellen ohne Modul-Präfix; die fertigen Binärmodule passen nur zur Swift-Version
+# Frameworks mit Schnittstellen ohne Modul-Präfix (auch »IOSurface.IOSurface« → »IOSurface«); die fertigen Binärmodule passen nur zur Swift-Version
 # von AXe und werden entfernt, damit der Compiler die Schnittstellen nimmt.
 FWC="$SIM_DIR/fw"
 rm -rf "$FWC" && cp -R "$FW" "$FWC"
 find "$FWC" -path '*.swiftmodule/*.swiftmodule' -delete
 for f in $(find "$FWC" -name '*.swiftinterface'); do
-  perl -pi -e 's/(?<![\w.])(FBSimulatorControl|FBControlCore|FBDeviceControl|XCTestBootstrap)\.(?=[A-Z_])//g unless /^\s*(\@_exported\s+)?(\@preconcurrency\s+)?import /' "$f"
+  perl -pi -e 'unless (/^\s*(\@_exported\s+)?(\@preconcurrency\s+)?import /) { s/(?<![\w.])(FBSimulatorControl|FBControlCore|FBDeviceControl|XCTestBootstrap)\.(?=[A-Z_])//g; s/(?<![\w.])(\w+)\.\1\b/$1/g; }' "$f"
 done
 
 INC=()
@@ -44,4 +56,5 @@ if [ ! -x "$SIM_DIR/simhelper" ]; then
   exit 1
 fi
 codesign --force --sign - "$SIM_DIR/simhelper" 2>/dev/null || true
+mkdir -p "$CACHE" && cp "$SIM_DIR/simhelper" "$CACHE/simhelper"
 echo "simhelper gebaut"

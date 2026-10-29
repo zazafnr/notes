@@ -112,12 +112,14 @@ jobs:
           ( brew install cameroncooke/axe/axe cloudflared > "$SIM_DIR/brew.log" 2>&1; echo $? > "$SIM_DIR/brew.done" ) &
 
       - name: Neuestes Xcode wählen
+        id: xcode
         run: |
           ls -d /Applications/Xcode*.app
           XC=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
           [ -z "$XC" ] && XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
           sudo xcode-select -s "$XC"
           xcodebuild -version
+          echo "build=$(xcodebuild -version | tail -1 | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
 
       - name: App-Branch holen
         if: inputs.app_ref != ''
@@ -161,6 +163,12 @@ jobs:
           [ "$(cat "$SIM_DIR/brew.done")" = "0" ] || { echo "::error::Homebrew-Installation fehlgeschlagen"; exit 1; }
           axe --version || axe --help | head -3
           cloudflared --version
+
+      - name: Video-Helfer aus dem Cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/sim/simhelper-cache
+          key: simhelper-${{ steps.xcode.outputs.build }}-${{ hashFiles('simulator/runner/simhelper.swift', 'simulator/runner/build-helper.sh') }}
 
       - name: Video-Helfer bauen
         run: simulator/runner/build-helper.sh || echo "::warning::simhelper fehlt – Bild über AXe-Einzelbilder, Drehen über das Simulator-Menü"
